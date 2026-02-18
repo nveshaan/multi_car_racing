@@ -4,13 +4,13 @@ import numpy as np
 import Box2D
 from Box2D.b2 import (edgeShape, circleShape, fixtureDef, polygonShape, revoluteJointDef, contactListener)
 
-import gym
-import gym.envs.box2d.car_dynamics as car_dynamics
-from gym import spaces
-from gym.utils import colorize, seeding, EzPickle
+import gymnasium as gym
+import gymnasium.envs.box2d.car_dynamics as car_dynamics
+from gymnasium import spaces
+from gymnasium.utils import colorize, seeding, EzPickle
 
-import pyglet
-from pyglet import gl
+import pygame
+from pygame import gfxdraw
 from shapely.geometry import Point, Polygon
 
 # Easiest continuous control task to learn from pixels, a top-down racing environment.
@@ -124,19 +124,27 @@ class FrictionDetector(contactListener):
 
 class MultiCarRacing(gym.Env, EzPickle):
     metadata = {
-        'render.modes': ['human', 'rgb_array', 'state_pixels'],
-        'video.frames_per_second' : FPS
+        'render_modes': ['human', 'rgb_array', 'state_pixels'],
+        'render_fps': FPS
     }
 
     def __init__(self, num_agents=2, verbose=1, direction='CCW',
                  use_random_direction=True, backwards_flag=True, h_ratio=0.25,
-                 use_ego_color=False):
+                 use_ego_color=False, render_mode='human'):
         EzPickle.__init__(self)
-        self.seed()
+        self.np_random = None  # Will be set in reset()
         self.num_agents = num_agents
         self.contactListener_keepref = FrictionDetector(self)
         self.world = Box2D.b2World((0,0), contactListener=self.contactListener_keepref)
-        self.viewer = [None] * num_agents
+        self.screen = [None] * num_agents  # Pygame surfaces for each car's view
+        self.display_screen = None  # Main pygame display window (for split-screen)
+        self.clock = None  # Pygame clock for FPS control
+        self.render_mode = render_mode
+        # Cached grid layout to prevent continuous resizing
+        self._grid_cols = None
+        self._grid_rows = None
+        self._grid_viewport_w = None
+        self._grid_viewport_h = None
         self.invisible_state_window = None
         self.invisible_video_window = None
         self.road = None
@@ -153,22 +161,19 @@ class MultiCarRacing(gym.Env, EzPickle):
         self.driving_on_grass = np.zeros(num_agents, dtype=bool)
         self.use_random_direction = use_random_direction  # Whether to select direction randomly
         self.episode_direction = direction  # Choose 'CCW' (default) or 'CW' (flipped)
-        if self.use_random_direction:  # Choose direction randomly
-            self.episode_direction = np.random.choice(['CW', 'CCW'])
+        # Note: if use_random_direction is True, direction is set in reset()
         self.backwards_flag = backwards_flag  # Boolean for rendering backwards driving flag
         self.h_ratio = h_ratio  # Configures vertical location of car within rendered window
         self.use_ego_color = use_ego_color  # Whether to make ego car always render as the same color
+        
+        self.surf = None  # Main rendering surface for pygame
+        self.isopen = True  # Track if window is open
 
         self.action_lb = np.tile(np.array([-1,+0,+0]), 1)  # self.num_agents)
         self.action_ub = np.tile(np.array([+1,+1,+1]), 1)  # self.num_agents)
 
         self.action_space = spaces.Box( self.action_lb, self.action_ub, dtype=np.float32)  # (steer, gas, brake) x N
         self.observation_space = spaces.Box(low=0, high=255, shape=(STATE_H, STATE_W, 3), dtype=np.uint8)
-
-
-    def seed(self, seed=None):
-        self.np_random, seed = seeding.np_random(seed)
-        return [seed]
 
     def _destroy(self):
         if not self.road:
@@ -337,7 +342,13 @@ class MultiCarRacing(gym.Env, EzPickle):
                                   range(len(self.road_poly))]
         return True
 
-    def reset(self):
+    def reset(self, seed=None, options=None):
+        # Handle seeding (Gymnasium API)
+        if seed is not None:
+            self.np_random, seed = seeding.np_random(seed)
+        elif self.np_random is None:
+            self.np_random, seed = seeding.np_random(None)
+        
         self._destroy()
         self.reward = np.zeros(self.num_agents)
         self.prev_reward = np.zeros(self.num_agents)
@@ -349,11 +360,11 @@ class MultiCarRacing(gym.Env, EzPickle):
         self.driving_backward = np.zeros(self.num_agents, dtype=bool)
         self.driving_on_grass = np.zeros(self.num_agents, dtype=bool)
         if self.use_random_direction:  # Choose direction randomly
-            self.episode_direction = np.random.choice(['CW', 'CCW'])
+            self.episode_direction = self.np_random.choice(['CW', 'CCW'])
 
         # Set positions of cars randomly
         ids = [i for i in range(self.num_agents)]
-        shuffle_ids = np.random.choice(ids, size=self.num_agents, replace=False)
+        shuffle_ids = self.np_random.choice(ids, size=self.num_agents, replace=False)
         self.car_order = {i: shuffle_ids[i] for i in range(self.num_agents)}
 
         while True:
@@ -405,7 +416,10 @@ class MultiCarRacing(gym.Env, EzPickle):
             for wheel in self.cars[car_id].wheels:
                 wheel.car_id = car_id
 
-        return self.step(None)[0]
+        # Get initial observation via step with no action
+        obs = self.step(None)[0]
+        info = {}
+        return obs, info
 
     def step(self, action):
         """ Run environment for one timestep. 
@@ -457,8 +471,8 @@ class MultiCarRacing(gym.Env, EzPickle):
 
                 # Retrieve car position
                 car_pos = np.array(car.hull.position).reshape((1, 2))
-                car_pos_as_point = Point((float(car_pos[:, 0]),
-                                          float(car_pos[:, 1])))
+                car_pos_as_point = Point((float(car_pos[0, 0]),
+                                          float(car_pos[0, 1])))
 
 
                 # Compute closest point on track to car position (l2 norm)
@@ -506,233 +520,384 @@ class MultiCarRacing(gym.Env, EzPickle):
                     done = True
                     step_reward[car_id] = -100
 
-        return self.state, step_reward, done, {}
+        return self.state, step_reward, done, False, {}
 
     def render(self, mode='human'):
+        if mode is None:
+            mode = self.render_mode
         assert mode in ['human', 'state_pixels', 'rgb_array']
 
+        # Render each car's view to its own surface
         result = []
         for cur_car_id in range(self.num_agents):
             result.append(self._render_window(cur_car_id, mode))
         
+        # For human mode, create a split-screen display
+        if mode == 'human':
+            self._render_split_screen()
+        
         return np.stack(result, axis=0)
 
+    def _render_split_screen(self):
+        """ Render all car views in a 2D grid, scaling to fit display if needed. """
+        if not pygame.get_init():
+            pygame.init()
+        if not pygame.font.get_init():
+            pygame.font.init()
+        
+        # Only calculate grid layout once (or when display_screen is None)
+        if self._grid_cols is None or self.display_screen is None:
+            # Ensure display is initialized before getting display info
+            if pygame.display.get_surface() is None:
+                pygame.display.init()
+            
+            # Get display dimensions
+            display_info = pygame.display.Info()
+            # Use sensible defaults if display info returns invalid values
+            max_display_w = display_info.current_w - 50 if display_info.current_w > 100 else 1920
+            max_display_h = display_info.current_h - 100 if display_info.current_h > 100 else 1080
+            
+            # Preferred viewport scale
+            preferred_scale = 0.6
+            
+            # Calculate optimal grid layout (cols x rows)
+            # Try to fit as many columns as possible at preferred scale
+            preferred_viewport_w = int(WINDOW_W * preferred_scale)
+            preferred_viewport_h = int(WINDOW_H * preferred_scale)
+            
+            # Calculate how many columns fit at preferred scale
+            max_cols = max(1, max_display_w // preferred_viewport_w) if preferred_viewport_w > 0 else 1
+            self._grid_cols = min(self.num_agents, max_cols)
+            self._grid_rows = math.ceil(self.num_agents / self._grid_cols)
+            
+            # Calculate viewport size that fits within display
+            # First, try with preferred scale
+            viewport_w = preferred_viewport_w
+            viewport_h = preferred_viewport_h
+            total_w = viewport_w * self._grid_cols
+            total_h = viewport_h * self._grid_rows
+            
+            # If total size exceeds display, scale down while maintaining aspect ratio
+            if total_w > max_display_w or total_h > max_display_h:
+                # Calculate scale factors for width and height constraints
+                scale_w = max_display_w / total_w if total_w > 0 else 1.0
+                scale_h = max_display_h / total_h if total_h > 0 else 1.0
+                scale_factor = min(scale_w, scale_h)
+                
+                viewport_w = int(viewport_w * scale_factor)
+                viewport_h = int(viewport_h * scale_factor)
+                total_w = viewport_w * self._grid_cols
+                total_h = viewport_h * self._grid_rows
+            
+            # Ensure minimum size
+            total_w = max(total_w, 100)
+            total_h = max(total_h, 100)
+            self._grid_viewport_w = max(viewport_w, 50)
+            self._grid_viewport_h = max(viewport_h, 50)
+            
+            # Create the display window
+            pygame.display.set_caption(f"Multi-Car Racing - {self.num_agents} Players")
+            self.display_screen = pygame.display.set_mode((total_w, total_h))
+        
+        if self.clock is None:
+            self.clock = pygame.time.Clock()
+        
+        # Use cached values
+        cols = self._grid_cols
+        rows = self._grid_rows
+        viewport_w = self._grid_viewport_w
+        viewport_h = self._grid_viewport_h
+        
+        # Fill background
+        self.display_screen.fill((30, 30, 30))
+        
+        # Blit each car's surface onto the main display in a grid
+        for car_id in range(self.num_agents):
+            if self.screen[car_id] is not None:
+                # Calculate grid position (row, col)
+                row = car_id // cols
+                col = car_id % cols
+                
+                # Scale the car's surface to fit the viewport (maintains aspect ratio)
+                scaled_surf = pygame.transform.scale(self.screen[car_id], (viewport_w, viewport_h))
+                
+                # Position in grid
+                x_pos = col * viewport_w
+                y_pos = row * viewport_h
+                self.display_screen.blit(scaled_surf, (x_pos, y_pos))
+                
+                # Draw divider lines
+                # Vertical divider (left edge of viewport, except first column)
+                if col > 0:
+                    pygame.draw.line(self.display_screen, (255, 255, 255), 
+                                     (x_pos, y_pos), (x_pos, y_pos + viewport_h), 2)
+                # Horizontal divider (top edge of viewport, except first row)
+                if row > 0:
+                    pygame.draw.line(self.display_screen, (255, 255, 255), 
+                                     (x_pos, y_pos), (x_pos + viewport_w, y_pos), 2)
+                
+                # Draw player label
+                font = pygame.font.Font(None, 36)
+                label = font.render(f"Player {car_id + 1}", True, (255, 255, 255))
+                self.display_screen.blit(label, (x_pos + 10, y_pos + 10))
+        
+        pygame.event.pump()
+        pygame.display.flip()
+        self.clock.tick(FPS)
+
     def _render_window(self, car_id, mode):
-        """ Performs the actual rendering for each car individually. 
+        """ Performs the actual rendering for each car individually using Pygame. 
         
         Parameters:
             car_id(int): Numerical id of car for which the corresponding window
                 will be rendered.
             mode(str): Rendering mode.
         """
+        
+        # Initialize pygame if needed
+        if not pygame.get_init():
+            pygame.init()
+        
+        # Create a surface for this car's view
+        if self.screen[car_id] is None:
+            self.screen[car_id] = pygame.Surface((WINDOW_W, WINDOW_H))
+        
+        if "t" not in self.__dict__:
+            return None  # reset() not called yet
 
-        if self.viewer[car_id] is None:
-            from gym.envs.classic_control import rendering
-            self.viewer[car_id] = rendering.Viewer(WINDOW_W, WINDOW_H)
-            self.viewer[car_id].window.set_caption(f"Car {car_id}")
-            self.score_label = pyglet.text.Label('0000', font_size=36,
-                x=20, y=WINDOW_H*2.5/40.00, anchor_x='left', anchor_y='center',
-                color=(255,255,255,255))
-            self.transform = rendering.Transform()
-
-        if "t" not in self.__dict__: return  # reset() not called yet
-
-        zoom = 0.1*SCALE*max(1-self.t, 0) + ZOOM*SCALE*min(self.t, 1)   # Animate zoom first second
-        #NOTE (ig): Following two variables seemed unused. Commented them out.
-        #zoom_state  = ZOOM*SCALE*STATE_W/WINDOW_W 
-        #zoom_video  = ZOOM*SCALE*VIDEO_W/WINDOW_W
+        # Create a surface to render on
+        self.surf = pygame.Surface((WINDOW_W, WINDOW_H))
+        
+        zoom = 0.1 * SCALE * max(1 - self.t, 0) + ZOOM * SCALE * min(self.t, 1)
         scroll_x = self.cars[car_id].hull.position[0]
         scroll_y = self.cars[car_id].hull.position[1]
         angle = -self.cars[car_id].hull.angle
         vel = self.cars[car_id].hull.linearVelocity
         if np.linalg.norm(vel) > 0.5:
             angle = math.atan2(vel[0], vel[1])
-        self.transform.set_scale(zoom, zoom)
 
-        # Positions car in the center with regard to the window width and 1/4 height away from the bottom.
-        self.transform.set_translation(
-            WINDOW_W/2 - (scroll_x*zoom*math.cos(angle) - scroll_y*zoom*math.sin(angle)),
-            WINDOW_H * self.h_ratio - (scroll_x*zoom*math.sin(angle) + scroll_y*zoom*math.cos(angle)) )
-        self.transform.set_rotation(angle)
-
-        # Set colors for each viewer and draw cars
+        # Render the road
+        self._render_road_pygame(zoom, scroll_x, scroll_y, angle)
+        
+        # Render cars
         for id, car in enumerate(self.cars):
-            if self.use_ego_color:  # Apply same ego car color coloring scheme
-                car.hull.color = (0.0, 0.0, 0.8)  # Set all other car colors to blue
-                if id == car_id:  # Ego car
-                    car.hull.color = (0.8, 0.0, 0.0)  # Set ego car color to red
-            car.draw(self.viewer[car_id], mode != "state_pixels")
+            if self.use_ego_color:
+                car.hull.color = (0.0, 0.0, 0.8)
+                if id == car_id:
+                    car.hull.color = (0.8, 0.0, 0.0)
+            self._render_car_pygame(car, zoom, scroll_x, scroll_y, angle)
 
-        arr = None
-        win = self.viewer[car_id].window
-        win.switch_to()
-        win.dispatch_events()
+        # Render indicators
+        self._render_indicators_pygame(car_id, WINDOW_W, WINDOW_H)
 
-        win.clear()
-        t = self.transform
-        if mode=='rgb_array':
-            VP_W = VIDEO_W
-            VP_H = VIDEO_H
-        elif mode == 'state_pixels':
-            VP_W = STATE_W
-            VP_H = STATE_H
-        else:
-            pixel_scale = 1
-            if hasattr(win.context, '_nscontext'):
-                pixel_scale = win.context._nscontext.view().backingScaleFactor()  # pylint: disable=protected-access
-            VP_W = int(pixel_scale * WINDOW_W)
-            VP_H = int(pixel_scale * WINDOW_H)
-
-        gl.glViewport(0, 0, VP_W, VP_H)
-        t.enable()
-        self.render_road()
-        for geom in self.viewer[car_id].onetime_geoms:
-           geom.render()
-        self.viewer[car_id].onetime_geoms = []
-        t.disable()
-        self.render_indicators(car_id, WINDOW_W, WINDOW_H)
-
+        self.screen[car_id].blit(self.surf, (0, 0))
+        
+        # For human mode, the display is handled in _render_split_screen
         if mode == 'human':
-            win.flip()
-            return self.viewer[car_id].isopen
+            return self.isopen
 
-        image_data = pyglet.image.get_buffer_manager().get_color_buffer().get_image_data()
-        arr = np.fromstring(image_data.get_data(), dtype=np.uint8, sep='')
-        arr = arr.reshape(VP_H, VP_W, 4)
-        arr = arr[::-1, :, 0:3]
+        # Return pixel array for rgb_array or state_pixels modes
+        if mode == 'rgb_array':
+            return self._create_image_array(self.surf, (VIDEO_W, VIDEO_H))
+        elif mode == 'state_pixels':
+            return self._create_image_array(self.surf, (STATE_W, STATE_H))
 
-        return arr
+    def _world_to_screen(self, x, y, zoom, scroll_x, scroll_y, angle):
+        """ Transform world coordinates to screen coordinates. """
+        # Translate relative to car
+        dx = x - scroll_x
+        dy = y - scroll_y
+        
+        # Rotate
+        cos_a = math.cos(angle)
+        sin_a = math.sin(angle)
+        rx = dx * cos_a - dy * sin_a
+        ry = dx * sin_a + dy * cos_a
+        
+        # Scale and translate to screen
+        screen_x = int(WINDOW_W / 2 + rx * zoom)
+        screen_y = int(WINDOW_H * self.h_ratio - ry * zoom)
+        
+        return screen_x, screen_y
 
-    def close(self):
-        if None not in self.viewer:
-            for viewer in self.viewer:
-                viewer.close()
-
-        self.viewer = [None] * self.num_agents
-
-    def render_road(self):
-        gl.glBegin(gl.GL_QUADS)
-        gl.glColor4f(0.4, 0.8, 0.4, 1.0)
-        gl.glVertex3f(-PLAYFIELD, +PLAYFIELD, 0)
-        gl.glVertex3f(+PLAYFIELD, +PLAYFIELD, 0)
-        gl.glVertex3f(+PLAYFIELD, -PLAYFIELD, 0)
-        gl.glVertex3f(-PLAYFIELD, -PLAYFIELD, 0)
-        gl.glColor4f(0.4, 0.9, 0.4, 1.0)
-        k = PLAYFIELD/20.0
+    def _render_road_pygame(self, zoom, scroll_x, scroll_y, angle):
+        """ Render the road using Pygame. """
+        # Fill with grass color
+        self.surf.fill((102, 204, 102))
+        
+        # Draw grass pattern
+        k = PLAYFIELD / 20.0
         for x in range(-20, 20, 2):
             for y in range(-20, 20, 2):
-                gl.glVertex3f(k*x + k, k*y + 0, 0)
-                gl.glVertex3f(k*x + 0, k*y + 0, 0)
-                gl.glVertex3f(k*x + 0, k*y + k, 0)
-                gl.glVertex3f(k*x + k, k*y + k, 0)
+                poly = [
+                    self._world_to_screen(k*x + k, k*y + 0, zoom, scroll_x, scroll_y, angle),
+                    self._world_to_screen(k*x + 0, k*y + 0, zoom, scroll_x, scroll_y, angle),
+                    self._world_to_screen(k*x + 0, k*y + k, zoom, scroll_x, scroll_y, angle),
+                    self._world_to_screen(k*x + k, k*y + k, zoom, scroll_x, scroll_y, angle),
+                ]
+                pygame.draw.polygon(self.surf, (102, 230, 102), poly)
+        
+        # Draw road polygons
         for poly, color in self.road_poly:
-            gl.glColor4f(color[0], color[1], color[2], 1)
-            for p in poly:
-                gl.glVertex3f(p[0], p[1], 0)
-        gl.glEnd()
+            screen_poly = [
+                self._world_to_screen(p[0], p[1], zoom, scroll_x, scroll_y, angle)
+                for p in poly
+            ]
+            color_rgb = (int(color[0] * 255), int(color[1] * 255), int(color[2] * 255))
+            pygame.draw.polygon(self.surf, color_rgb, screen_poly)
 
-    def render_indicators(self, agent_id, W, H):
-        gl.glBegin(gl.GL_QUADS)
-        s = W/40.0
-        h = H/40.0
-        gl.glColor4f(0,0,0,1)
-        gl.glVertex3f(W, 0, 0)
-        gl.glVertex3f(W, 5*h, 0)
-        gl.glVertex3f(0, 5*h, 0)
-        gl.glVertex3f(0, 0, 0)
+    def _render_car_pygame(self, car, zoom, scroll_x, scroll_y, angle):
+        """ Render a car using Pygame. """
+        # Get car body vertices
+        for fixture in car.hull.fixtures:
+            shape = fixture.shape
+            vertices = [(car.hull.transform * v) for v in shape.vertices]
+            screen_vertices = [
+                self._world_to_screen(v[0], v[1], zoom, scroll_x, scroll_y, angle)
+                for v in vertices
+            ]
+            color = car.hull.color
+            color_rgb = (int(color[0] * 255), int(color[1] * 255), int(color[2] * 255))
+            pygame.draw.polygon(self.surf, color_rgb, screen_vertices)
+        
+        # Draw wheels
+        for wheel in car.wheels:
+            for fixture in wheel.fixtures:
+                shape = fixture.shape
+                vertices = [(wheel.transform * v) for v in shape.vertices]
+                screen_vertices = [
+                    self._world_to_screen(v[0], v[1], zoom, scroll_x, scroll_y, angle)
+                    for v in vertices
+                ]
+                pygame.draw.polygon(self.surf, (50, 50, 50), screen_vertices)
+
+    def _render_indicators_pygame(self, agent_id, W, H):
+        """ Render HUD indicators using Pygame. """
+        s = W / 40.0
+        h = H / 40.0
+        
+        # Draw black bar at bottom
+        pygame.draw.rect(self.surf, (0, 0, 0), (0, H - 5*h, W, 5*h))
+        
         def vertical_ind(place, val, color):
-            gl.glColor4f(color[0], color[1], color[2], 1)
-            gl.glVertex3f((place+0)*s, h + h*val, 0)
-            gl.glVertex3f((place+1)*s, h + h*val, 0)
-            gl.glVertex3f((place+1)*s, h, 0)
-            gl.glVertex3f((place+0)*s, h, 0)
+            rect = pygame.Rect(int(place * s), int(H - h - h * val), int(s), int(h * val))
+            pygame.draw.rect(self.surf, color, rect)
+        
         def horiz_ind(place, val, color):
-            gl.glColor4f(color[0], color[1], color[2], 1)
-            gl.glVertex3f((place+0)*s, 4*h , 0)
-            gl.glVertex3f((place+val)*s, 4*h, 0)
-            gl.glVertex3f((place+val)*s, 2*h, 0)
-            gl.glVertex3f((place+0)*s, 2*h, 0)
-        true_speed = np.sqrt(np.square(self.cars[agent_id].hull.linearVelocity[0]) \
-            + np.square(self.cars[agent_id].hull.linearVelocity[1]))
-        vertical_ind(5, 0.02*true_speed, (1,1,1))
-        vertical_ind(7, 0.01*self.cars[agent_id].wheels[0].omega, (0.0,0,1)) # ABS sensors
-        vertical_ind(8, 0.01*self.cars[agent_id].wheels[1].omega, (0.0,0,1))
-        vertical_ind(9, 0.01*self.cars[agent_id].wheels[2].omega, (0.2,0,1))
-        vertical_ind(10,0.01*self.cars[agent_id].wheels[3].omega, (0.2,0,1))
-        horiz_ind(20, -10.0*self.cars[agent_id].wheels[0].joint.angle, (0,1,0))
-        horiz_ind(30, -0.8*self.cars[agent_id].hull.angularVelocity, (1,0,0))
-        gl.glEnd()
-        self.score_label.text = "%04i" % self.reward[agent_id]
-        self.score_label.draw()
-
-        # Render backwards flag if driving backward and backwards flag render is enabled
+            rect = pygame.Rect(int(place * s), int(H - 4*h), int(val * s), int(2*h))
+            pygame.draw.rect(self.surf, color, rect)
+        
+        true_speed = np.sqrt(
+            np.square(self.cars[agent_id].hull.linearVelocity[0]) +
+            np.square(self.cars[agent_id].hull.linearVelocity[1])
+        )
+        
+        vertical_ind(5, 0.02 * true_speed, (255, 255, 255))
+        vertical_ind(7, 0.01 * self.cars[agent_id].wheels[0].omega, (0, 0, 255))
+        vertical_ind(8, 0.01 * self.cars[agent_id].wheels[1].omega, (0, 0, 255))
+        vertical_ind(9, 0.01 * self.cars[agent_id].wheels[2].omega, (51, 0, 255))
+        vertical_ind(10, 0.01 * self.cars[agent_id].wheels[3].omega, (51, 0, 255))
+        horiz_ind(20, -10.0 * self.cars[agent_id].wheels[0].joint.angle, (0, 255, 0))
+        horiz_ind(30, -0.8 * self.cars[agent_id].hull.angularVelocity, (255, 0, 0))
+        
+        # Draw score
+        font = pygame.font.Font(None, 48)
+        score_text = font.render(f"{int(self.reward[agent_id]):04d}", True, (255, 255, 255))
+        self.surf.blit(score_text, (20, int(H - 2.5*h - 18)))
+        
+        # Render backwards flag
         if self.driving_backward[agent_id] and self.backwards_flag:
-            pyglet.graphics.draw(3, gl.GL_TRIANGLES,
-                                 ('v2i', (W-100, 30,
-                                          W-75, 70,
-                                          W-50, 30)),
-                                 ('c3B', (0, 0, 255) * 3))
+            pygame.draw.polygon(
+                self.surf, (0, 0, 255),
+                [(W - 100, H - 30), (W - 75, H - 70), (W - 50, H - 30)]
+            )
+
+    def _create_image_array(self, surface, size):
+        """ Create a numpy array from a pygame surface at the given size. """
+        scaled = pygame.transform.scale(surface, size)
+        return np.transpose(
+            np.array(pygame.surfarray.pixels3d(scaled)), axes=(1, 0, 2)
+        )
+
+    def close(self):
+        if any(screen is not None for screen in self.screen) or self.display_screen is not None:
+            pygame.quit()
+        self.screen = [None] * self.num_agents
+        self.display_screen = None
+        self._grid_cols = None
+        self._grid_rows = None
+        self._grid_viewport_w = None
+        self._grid_viewport_h = None
+        self.isopen = False
 
 
-if __name__=="__main__":
-    from pyglet.window import key
-    NUM_CARS = 2  # Supports key control of two cars, but can simulate as many as needed
+if __name__ == "__main__":
+    NUM_CARS = 10  # Supports key control of two cars, but can simulate as many as needed
 
-    # Specify key controls for cars
-    CAR_CONTROL_KEYS = [[key.LEFT, key.RIGHT, key.UP, key.DOWN],
-                        [key.A, key.D, key.W, key.S]]
+    # Specify key controls for cars (using pygame key codes)
+    CAR_CONTROL_KEYS = [
+        [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN],
+        [pygame.K_a, pygame.K_d, pygame.K_w, pygame.K_s]
+    ]
 
-    a = np.zeros((NUM_CARS,3))
-    def key_press(k, mod):
-        global restart, stopped, CAR_CONTROL_KEYS
-        if k==0xff1b: stopped = True # Terminate on esc.
-        if k==0xff0d: restart = True # Restart on Enter.
-
-        # Iterate through cars and assign them control keys (mod num controllers)
-        for i in range(min(len(CAR_CONTROL_KEYS), NUM_CARS)):
-            if k==CAR_CONTROL_KEYS[i % len(CAR_CONTROL_KEYS)][0]:  a[i][0] = -1.0
-            if k==CAR_CONTROL_KEYS[i % len(CAR_CONTROL_KEYS)][1]: a[i][0] = +1.0
-            if k==CAR_CONTROL_KEYS[i % len(CAR_CONTROL_KEYS)][2]:    a[i][1] = +1.0
-            if k==CAR_CONTROL_KEYS[i % len(CAR_CONTROL_KEYS)][3]:  a[i][2] = +0.8   # set 1.0 for wheels to block to zero rotation
-
-    def key_release(k, mod):
-        global CAR_CONTROL_KEYS
-
-        # Iterate through cars and assign them control keys (mod num controllers)
-        for i in range(min(len(CAR_CONTROL_KEYS), NUM_CARS)):
-            if k==CAR_CONTROL_KEYS[i % len(CAR_CONTROL_KEYS)][0]  and a[i][0]==-1.0: a[i][0] = 0
-            if k==CAR_CONTROL_KEYS[i % len(CAR_CONTROL_KEYS)][1] and a[i][0]==+1.0: a[i][0] = 0
-            if k==CAR_CONTROL_KEYS[i % len(CAR_CONTROL_KEYS)][2]:    a[i][1] = 0
-            if k==CAR_CONTROL_KEYS[i % len(CAR_CONTROL_KEYS)][3]:  a[i][2] = 0
-
-
-    env = MultiCarRacing(NUM_CARS)
-    env.render()
-    for viewer in env.viewer:
-        viewer.window.on_key_press = key_press
-        viewer.window.on_key_release = key_release
+    a = np.zeros((NUM_CARS, 3))
+    env = MultiCarRacing(NUM_CARS, render_mode='human')
+    
     record_video = False
     if record_video:
-        from gym.wrappers.monitor import Monitor
-        env = Monitor(env, '/tmp/video-test', force=True)
-    isopen = True
-    stopped = False
-    while isopen and not stopped:
-        env.reset()
-        total_reward = np.zeros(NUM_CARS)
-        steps = 0
-        restart = False
-        while True:
-            s, r, done, info = env.step(a)
-            total_reward += r
-            if steps % 200 == 0 or done:
-                print("\nActions: " + str.join(" ", [f"Car {x}: "+str(a[x]) for x in range(NUM_CARS)]))
-                print(f"Step {steps} Total_reward "+str(total_reward))
-                #import matplotlib.pyplot as plt
-                #plt.imshow(s)
-                #plt.savefig("test.jpeg")
-            steps += 1
-            isopen = env.render().all()
-            if stopped or done or restart or isopen == False:
-                break
+        from gymnasium.wrappers import RecordVideo
+        env = RecordVideo(env, '/tmp/video-test', episode_trigger=lambda x: True)
+    
+    obs, info = env.reset()
+    
+    running = True
+    restart = False
+    total_reward = np.zeros(NUM_CARS)
+    steps = 0
+    
+    while running:
+        # Handle pygame events
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    running = False
+                if event.key == pygame.K_RETURN:
+                    restart = True
+        
+        # Get current key states
+        keys = pygame.key.get_pressed()
+        for i in range(min(len(CAR_CONTROL_KEYS), NUM_CARS)):
+            # Steering: -1 for left, +1 for right, 0 for none
+            if keys[CAR_CONTROL_KEYS[i][0]]:  # Left
+                a[i][0] = -1.0
+            elif keys[CAR_CONTROL_KEYS[i][1]]:  # Right
+                a[i][0] = +1.0
+            else:
+                a[i][0] = 0
+            
+            # Gas
+            a[i][1] = 1.0 if keys[CAR_CONTROL_KEYS[i][2]] else 0
+            
+            # Brake
+            a[i][2] = 0.8 if keys[CAR_CONTROL_KEYS[i][3]] else 0
+        
+        s, r, terminated, truncated, info = env.step(a)
+        done = terminated or truncated
+        total_reward += r
+        steps += 1
+        
+        if steps % 200 == 0 or done:
+            print("\nActions: " + " ".join([f"Car {x}: {a[x]}" for x in range(NUM_CARS)]))
+            print(f"Step {steps} Total_reward {total_reward}")
+        
+        env.render()
+        
+        if done or restart:
+            obs, info = env.reset()
+            total_reward = np.zeros(NUM_CARS)
+            steps = 0
+            restart = False
+    
     env.close()

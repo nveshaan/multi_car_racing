@@ -1,6 +1,6 @@
 from .multi_car_racing import MultiCarRacing
 
-from gym.envs.registration import register
+from gymnasium.envs.registration import register
 
 register(
     id='MultiCarRacing-v0',

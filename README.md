@@ -24,14 +24,14 @@ This will launch a two-player variant (each player in its own window) that can b
 Let's quickly walk through how this environment can be used in your code:
 
 ```python
-import gym
+import gymnasium as gym
 import gym_multi_car_racing
 
 env = gym.make("MultiCarRacing-v0", num_agents=2, direction='CCW',
         use_random_direction=True, backwards_flag=True, h_ratio=0.25,
         use_ego_color=False)
 
-obs = env.reset()
+obs, info = env.reset()
 done = False
 total_reward = 0
 
@@ -45,7 +45,8 @@ while not done:
   # obs is of shape (num_agents, 96, 96, 3)
   # reward is of shape (num_agents,)
   # done is a bool and info is not used (an empty dict).
-  obs, reward, done, info = env.step(action)
+  obs, reward, terminated, truncated, info = env.step(action)
+  done = terminated or truncated
   total_reward += reward
   env.render()
 
