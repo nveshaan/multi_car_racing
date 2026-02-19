@@ -10,7 +10,7 @@ from gymnasium import spaces
 from gymnasium.utils import colorize, seeding, EzPickle
 
 import pygame
-from pygame import gfxdraw
+
 from shapely.geometry import Point, Polygon
 
 # Easiest continuous control task to learn from pixels, a top-down racing environment.
@@ -130,7 +130,7 @@ class MultiCarRacing(gym.Env, EzPickle):
 
     def __init__(self, num_agents=2, verbose=1, direction='CCW',
                  use_random_direction=True, backwards_flag=True, h_ratio=0.25,
-                 use_ego_color=False, render_mode='human'):
+                 use_ego_color=False, render_mode=None):
         EzPickle.__init__(self)
         self.np_random = None  # Will be set in reset()
         self.num_agents = num_agents
@@ -145,8 +145,7 @@ class MultiCarRacing(gym.Env, EzPickle):
         self._grid_rows = None
         self._grid_viewport_w = None
         self._grid_viewport_h = None
-        self.invisible_state_window = None
-        self.invisible_video_window = None
+
         self.road = None
         self.cars = [None] * num_agents
         self.car_order = None  # Determines starting positions of cars
@@ -530,11 +529,15 @@ class MultiCarRacing(gym.Env, EzPickle):
         # Render each car's view to its own surface
         result = []
         for cur_car_id in range(self.num_agents):
-            result.append(self._render_window(cur_car_id, mode))
+            frame = self._render_window(cur_car_id, mode)
+            # Only collect frames for array-returning modes
+            if mode != 'human':
+                result.append(frame)
         
-        # For human mode, create a split-screen display
+        # For human mode, create a split-screen display and return None
         if mode == 'human':
             self._render_split_screen()
+            return None
         
         return np.stack(result, axis=0)
 
@@ -551,11 +554,21 @@ class MultiCarRacing(gym.Env, EzPickle):
             if pygame.display.get_surface() is None:
                 pygame.display.init()
             
-            # Get display dimensions
-            display_info = pygame.display.Info()
+            # Get display dimensions safely (handles headless / error cases)
+            try:
+                display_info = pygame.display.Info()
+                current_w = getattr(display_info, "current_w", 0) or 0
+                current_h = getattr(display_info, "current_h", 0) or 0
+            except pygame.error:
+                current_w = 0
+                current_h = 0
+            except Exception:
+                current_w = 0
+                current_h = 0
+            
             # Use sensible defaults if display info returns invalid values
-            max_display_w = display_info.current_w - 50 if display_info.current_w > 100 else 1920
-            max_display_h = display_info.current_h - 100 if display_info.current_h > 100 else 1080
+            max_display_w = current_w - 50 if current_w > 100 else 1920
+            max_display_h = current_h - 100 if current_h > 100 else 1080
             
             # Preferred viewport scale
             preferred_scale = 0.6
@@ -780,11 +793,26 @@ class MultiCarRacing(gym.Env, EzPickle):
         pygame.draw.rect(self.surf, (0, 0, 0), (0, H - 5*h, W, 5*h))
         
         def vertical_ind(place, val, color):
-            rect = pygame.Rect(int(place * s), int(H - h - h * val), int(s), int(h * val))
+            # Clamp to avoid creating Rects with negative height
+            clamped_val = max(val, 0.0)
+            rect = pygame.Rect(
+                int(place * s),
+                int(H - h - h * clamped_val),
+                int(s),
+                int(h * clamped_val),
+            )
             pygame.draw.rect(self.surf, color, rect)
         
         def horiz_ind(place, val, color):
-            rect = pygame.Rect(int(place * s), int(H - 4*h), int(val * s), int(2*h))
+            base_x = int(place * s)
+            width = int(abs(val) * s)
+            if width <= 0:
+                return
+            if val >= 0:
+                x = base_x
+            else:
+                x = base_x - width
+            rect = pygame.Rect(x, int(H - 4*h), width, int(2*h))
             pygame.draw.rect(self.surf, color, rect)
         
         true_speed = np.sqrt(
@@ -821,7 +849,7 @@ class MultiCarRacing(gym.Env, EzPickle):
 
     def close(self):
         if any(screen is not None for screen in self.screen) or self.display_screen is not None:
-            pygame.quit()
+            pygame.display.quit()
         self.screen = [None] * self.num_agents
         self.display_screen = None
         self._grid_cols = None
