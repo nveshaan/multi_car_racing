@@ -10,7 +10,6 @@ from gymnasium import spaces
 from gymnasium.utils import colorize, seeding, EzPickle
 
 import pygame
-
 from shapely.geometry import Point, Polygon
 
 # Easiest continuous control task to learn from pixels, a top-down racing environment.
@@ -145,7 +144,6 @@ class MultiCarRacing(gym.Env, EzPickle):
         self._grid_rows = None
         self._grid_viewport_w = None
         self._grid_viewport_h = None
-
         self.road = None
         self.cars = [None] * num_agents
         self.car_order = None  # Determines starting positions of cars
@@ -471,7 +469,7 @@ class MultiCarRacing(gym.Env, EzPickle):
                 # Retrieve car position
                 car_pos = np.array(car.hull.position).reshape((1, 2))
                 car_pos_as_point = Point((float(car_pos[0, 0]),
-                                          float(car_pos[0, 1])))
+                                          float(car_pos[0, 1]))) # FIXME: 0 vs :
 
 
                 # Compute closest point on track to car position (l2 norm)
@@ -793,25 +791,17 @@ class MultiCarRacing(gym.Env, EzPickle):
         pygame.draw.rect(self.surf, (0, 0, 0), (0, H - 5*h, W, 5*h))
         
         def vertical_ind(place, val, color):
-            # Clamp to avoid creating Rects with negative height
-            clamped_val = max(val, 0.0)
-            rect = pygame.Rect(
-                int(place * s),
-                int(H - h - h * clamped_val),
-                int(s),
-                int(h * clamped_val),
-            )
+            val = max(0, min(val, 4))  # Clamp to prevent overflow
+            rect = pygame.Rect(int(place * s), int(H - h - h * val), int(s), int(h * val))
             pygame.draw.rect(self.surf, color, rect)
         
         def horiz_ind(place, val, color):
-            base_x = int(place * s)
-            width = int(abs(val) * s)
-            if width <= 0:
-                return
-            if val >= 0:
-                x = base_x
-            else:
-                x = base_x - width
+            # Handle negative values by adjusting x position and using absolute width
+            x = int(place * s)
+            width = int(val * s)
+            if width < 0:
+                x = x + width  # Shift x left by the width amount
+                width = -width  # Make width positive
             rect = pygame.Rect(x, int(H - 4*h), width, int(2*h))
             pygame.draw.rect(self.surf, color, rect)
         
@@ -849,7 +839,7 @@ class MultiCarRacing(gym.Env, EzPickle):
 
     def close(self):
         if any(screen is not None for screen in self.screen) or self.display_screen is not None:
-            pygame.display.quit()
+            pygame.quit()
         self.screen = [None] * self.num_agents
         self.display_screen = None
         self._grid_cols = None
@@ -860,7 +850,7 @@ class MultiCarRacing(gym.Env, EzPickle):
 
 
 if __name__ == "__main__":
-    NUM_CARS = 10  # Supports key control of two cars, but can simulate as many as needed
+    NUM_CARS = 2  # Supports key control of two cars, but can simulate as many as needed
 
     # Specify key controls for cars (using pygame key codes)
     CAR_CONTROL_KEYS = [
