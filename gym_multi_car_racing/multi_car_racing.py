@@ -128,7 +128,7 @@ class MultiCarRacing(gym.Env, EzPickle):
     }
 
     def __init__(self, num_agents=2, verbose=1, direction='CCW',
-                 use_random_direction=True, backwards_flag=True, h_ratio=0.25,
+                 use_random_direction=True, backwards_flag=True, h_ratio=0.75,
                  use_ego_color=False, render_mode=None):
         EzPickle.__init__(self)
         self.np_random = None  # Will be set in reset()
