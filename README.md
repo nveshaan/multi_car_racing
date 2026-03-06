@@ -19,7 +19,10 @@ The reward structure is designed to be sufficiently dense for learning basic dri
 ```bash
 git clone https://github.com/nveshaan/multi_car_racing.git
 cd multi_car_racing
+
 pip install -e .
+# or
+uv add --editable .
 ```
 
 ## Basic Usage
