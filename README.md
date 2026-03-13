@@ -7,7 +7,7 @@
 
 This repository contains `MultiCarRacing-v0`, a multiplayer variant of Gym’s original `CarRacing-v0` environment.
 
-This environment is a multi-player continuous control task. The state consists of 96x96 RGB pixels for each player. The per-player reward is `-0.1` every timestep and `+1000/num_tiles * (num_agents - past_visitors)/num_agents` for each tile visited.
+This environment supports both continuous and discrete control. The state consists of 96x96 RGB pixels for each player. The per-player reward is `-0.1` every timestep and `+1000/num_tiles * (num_agents - past_visitors)/num_agents` for each tile visited.
 
 For example, in a race with 2 agents, the first agent to visit a tile receives a reward of `+1000/num_tiles` and the second agent receives `+500/num_tiles` for that tile. Each agent can only be rewarded once for visiting a particular tile.
 
@@ -52,14 +52,22 @@ This launches a two-player variant (each player in its own window) that can be c
 | `backwards_flag`       | bool  | `True`  | Shows a flag when a car is driving backward         |
 | `h_ratio`              | float | `0.75`  | Vertical camera anchor in render                    |
 | `use_ego_color`        | bool  | `False` | Keep ego vehicle color consistent across players    |
+| `continuous`           | bool  | `True`  | Use continuous actions (`Box`) or discrete actions  |
+| `discrete_actions`     | array | `None`  | Optional custom action table for discrete mode      |
 | `render_mode`          |  str  | `None`  | `human`, `rgb_array`, or `state_pixels`             |
 
 ### Spaces
 
-- `action_space.shape = (3 * num_agents,)` with controls per car: `(steer, gas, brake)`
-- `observation_space.shape = (96, 96, 3)` (`uint8` RGB image)
+- Continuous mode (`continuous=True`):
+  - `action_space = Box(low, high)` with controls per car: `(steer, gas, brake)`
+  - action shape accepted by `step`: `(3 * num_agents,)` or `(num_agents, 3)`
+- Discrete mode (`continuous=False`):
+  - single-agent: `action_space = Discrete(n_actions)`
+  - multi-agent: `action_space = MultiDiscrete([n_actions] * num_agents)`
+  - default action table has 7 actions: noop, left, right, gas, brake, left+gas, right+gas
+- Observation space: `Box(low=0, high=255, shape=(96, 96, 3), dtype=uint8)`
 
-For `step(action)`, actions are reshaped internally to `(num_agents, 3)`, so both flattened and matrix-style actions are accepted as long as sizes match.
+In all modes, each decoded action is interpreted as `(steer, gas, brake)` per car.
 
 ## Single-Agent Usage (`num_agents=1`)
 
@@ -90,6 +98,22 @@ while not done:
     total_reward += reward
 
 print("episode return:", total_reward)
+```
+
+### Single-Agent Discrete Example
+
+```python
+import gymnasium as gym
+import gym_multi_car_racing
+
+env = gym.make(
+    "MultiCarRacing-v0",
+    num_agents=1,
+    continuous=False,
+)
+
+obs, info = env.reset()
+obs, reward, terminated, truncated, info = env.step(0)  # integer action index
 ```
 
 ## Multi-Agent Usage (`num_agents>1`)
@@ -131,12 +155,43 @@ while not done:
 print("per-agent returns:", total_reward)
 ```
 
+### Multi-Agent Discrete Example
+
+```python
+import gymnasium as gym
+import numpy as np
+import gym_multi_car_racing
+
+num_agents = 2
+env = gym.make("MultiCarRacing-v0", num_agents=num_agents, continuous=False)
+
+obs, info = env.reset()
+action = np.array([0, 3], dtype=np.int64)  # one discrete action index per agent
+obs, reward, terminated, truncated, info = env.step(action)
+```
+
+### Default Discrete Action Mapping
+
+When `continuous=False` and `discrete_actions` is not provided, the following action table is used:
+
+| Action Index | `(steer, gas, brake)` | Meaning     |
+| ------------ | --------------------- | ----------- |
+| `0`          | `(0.0, 0.0, 0.0)`     | No-op       |
+| `1`          | `(-1.0, 0.0, 0.0)`    | Steer left  |
+| `2`          | `(1.0, 0.0, 0.0)`     | Steer right |
+| `3`          | `(0.0, 1.0, 0.0)`     | Gas         |
+| `4`          | `(0.0, 0.0, 0.8)`     | Brake       |
+| `5`          | `(-1.0, 1.0, 0.0)`    | Left + gas  |
+| `6`          | `(1.0, 1.0, 0.0)`     | Right + gas |
+
 ## Shapes By Mode
 
-| Mode              | `reset()` observation | `step(action)` expected action | `step()` reward |
-| ----------------- | --------------------- | ------------------------------ | --------------- |
-| `num_agents == 1` | `(96, 96, 3)`         | `(3,)` or `(1, 3)`             | scalar `float`  |
-| `num_agents > 1`  | `(N, 96, 96, 3)`      | `(3N,)` or `(N, 3)`            | `(N,)` array    |
+| Mode                               | `reset()` observation | `step(action)` expected action | `step()` reward |
+| ---------------------------------- | --------------------- | ------------------------------ | --------------- |
+| Single-agent + continuous          | `(96, 96, 3)`         | `(3,)` or `(1, 3)`             | scalar `float`  |
+| Single-agent + discrete            | `(96, 96, 3)`         | scalar integer                 | scalar `float`  |
+| Multi-agent + continuous (`N > 1`) | `(N, 96, 96, 3)`      | `(3N,)` or `(N, 3)`            | `(N,)` array    |
+| Multi-agent + discrete (`N > 1`)   | `(N, 96, 96, 3)`      | `(N,)` integer indices         | `(N,)` array    |
 
 Where `N = num_agents`.
 

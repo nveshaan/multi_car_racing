@@ -129,7 +129,8 @@ class MultiCarRacing(gym.Env, EzPickle):
 
     def __init__(self, num_agents=2, verbose=1, direction='CCW',
                  use_random_direction=True, backwards_flag=True, h_ratio=0.75,
-                 use_ego_color=False, render_mode=None):
+                 use_ego_color=False, continuous=True, discrete_actions=None,
+                 render_mode=None):
         EzPickle.__init__(self)
         self.np_random = None  # Will be set in reset()
         self.num_agents = num_agents
@@ -165,11 +166,37 @@ class MultiCarRacing(gym.Env, EzPickle):
         
         self.surf = None  # Main rendering surface for pygame
         self.isopen = True  # Track if window is open
+        self.continuous = continuous
+
+        if discrete_actions is None:
+            # (steer, gas, brake): noop, left, right, gas, brake, left+gas, right+gas
+            discrete_actions = np.array(
+                [
+                    [0.0, 0.0, 0.0],
+                    [-1.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.8],
+                    [-1.0, 1.0, 0.0],
+                    [1.0, 1.0, 0.0],
+                ],
+                dtype=np.float32,
+            )
+        self.discrete_actions = np.asarray(discrete_actions, dtype=np.float32)
+        if self.discrete_actions.ndim != 2 or self.discrete_actions.shape[1] != 3:
+            raise ValueError("discrete_actions must have shape (n_actions, 3)")
 
         self.action_lb = np.tile(np.array([-1, +0, +0], dtype=np.float32), self.num_agents)
         self.action_ub = np.tile(np.array([+1, +1, +1], dtype=np.float32), self.num_agents)
 
-        self.action_space = spaces.Box(self.action_lb, self.action_ub, dtype=np.float32)
+        if self.continuous:
+            self.action_space = spaces.Box(self.action_lb, self.action_ub, dtype=np.float32)
+        else:
+            n_actions = int(self.discrete_actions.shape[0])
+            if self.num_agents == 1:
+                self.action_space = spaces.Discrete(n_actions)
+            else:
+                self.action_space = spaces.MultiDiscrete(np.full(self.num_agents, n_actions))
         self.observation_space = spaces.Box(low=0, high=255, shape=(STATE_H, STATE_W, 3), dtype=np.uint8)
 
     def _destroy(self):
@@ -433,14 +460,25 @@ class MultiCarRacing(gym.Env, EzPickle):
         """ Run environment for one timestep. 
         
         Parameters:
-            action(np.ndarray): Numpy array of shape (num_agents,3) containing the
-                commands for each car. Each command is of the shape (steer, gas, brake).
+            action:
+                * Continuous mode: shape `(3 * num_agents,)` or `(num_agents, 3)`
+                * Discrete mode: scalar int for single-agent, or shape `(num_agents,)`
         """
 
         if action is not None:
+            if self.continuous:
+                action = np.asarray(action, dtype=np.float32)
+                action = np.reshape(action, (self.num_agents, -1))
+            else:
+                if self.num_agents == 1:
+                    action_idx = np.array([int(np.asarray(action).item())], dtype=np.int64)
+                else:
+                    action_idx = np.asarray(action, dtype=np.int64).reshape(self.num_agents)
+                if np.any(action_idx < 0) or np.any(action_idx >= self.discrete_actions.shape[0]):
+                    raise ValueError("Discrete action index out of bounds")
+                action = self.discrete_actions[action_idx]
+
             # Box2D setters expect plain float values, not numpy scalar/array objects.
-            action = np.asarray(action, dtype=np.float32)
-            action = np.reshape(action, (self.num_agents, -1))
             for car_id, car in enumerate(self.cars):
                 steer = float(action[car_id][0])
                 gas = float(action[car_id][1])
