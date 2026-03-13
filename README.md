@@ -13,7 +13,6 @@ For example, in a race with 2 agents, the first agent to visit a tile receives a
 
 The reward structure is designed to be sufficiently dense for learning basic driving skills while encouraging competition between agents.
 
-
 ## Installation
 
 ```bash
@@ -26,7 +25,8 @@ uv add --editable .
 ```
 
 ## Basic Usage
-After installation, the environment can be tried out by running:
+
+After installation, you can launch the keyboard demo with:
 
 ```bash
 python -m gym_multi_car_racing.multi_car_racing
@@ -34,80 +34,120 @@ python -m gym_multi_car_racing.multi_car_racing
 
 This launches a two-player variant (each player in its own window) that can be controlled via the keyboard:
 
-* Player 1: Arrow keys
-* Player 2: `W`, `A`, `S`, `D`
+- Player 1: Arrow keys
+- Player 2: `W`, `A`, `S`, `D`
 
-Example usage in code:
+## API Overview
+
+`MultiCarRacing-v0` supports both single-agent and multi-agent usage through one environment class.
+
+### Constructor Arguments
+
+| Parameter              | Type  | Default | Description                                         |
+| ---------------------- | :---: | :-----: | --------------------------------------------------- |
+| `num_agents`           |  int  |   `2`   | Number of cars/agents                               |
+| `verbose`              |  int  |   `1`   | Prints track-generation diagnostics                 |
+| `direction`            |  str  | `'CCW'` | Track winding direction (`'CW'` or `'CCW'`)         |
+| `use_random_direction` | bool  | `True`  | Randomize winding direction (overrides `direction`) |
+| `backwards_flag`       | bool  | `True`  | Shows a flag when a car is driving backward         |
+| `h_ratio`              | float | `0.75`  | Vertical camera anchor in render                    |
+| `use_ego_color`        | bool  | `False` | Keep ego vehicle color consistent across players    |
+| `render_mode`          |  str  | `None`  | `human`, `rgb_array`, or `state_pixels`             |
+
+### Spaces
+
+- `action_space.shape = (3 * num_agents,)` with controls per car: `(steer, gas, brake)`
+- `observation_space.shape = (96, 96, 3)` (`uint8` RGB image)
+
+For `step(action)`, actions are reshaped internally to `(num_agents, 3)`, so both flattened and matrix-style actions are accepted as long as sizes match.
+
+## Single-Agent Usage (`num_agents=1`)
+
+Single-agent mode is compatible with standard Gym/SB3 expectations:
+
+- `reset()` returns `obs` shape `(96, 96, 3)`
+- `step()` returns scalar `reward: float`
 
 ```python
 import gymnasium as gym
-import gym_multi_car_racing
+import gym_multi_car_racing  # registers MultiCarRacing-v0
 
 env = gym.make(
     "MultiCarRacing-v0",
-    num_agents=2,
-    direction='CCW',
-    use_random_direction=True,
-    backwards_flag=True,
-    h_ratio=0.25,
-    use_ego_color=False
+    num_agents=1,
+    use_random_direction=False,
+    backwards_flag=False,
 )
 
 obs, info = env.reset()
 done = False
-total_reward = 0
+total_reward = 0.0
 
 while not done:
-    action = my_policy(obs)  # shape: (num_agents, 3)
+    action = env.action_space.sample()  # shape (3,)
+    obs, reward, terminated, truncated, info = env.step(action)
+    done = terminated or truncated
+    total_reward += reward
+
+print("episode return:", total_reward)
+```
+
+## Multi-Agent Usage (`num_agents>1`)
+
+Multi-agent mode returns per-agent tensors:
+
+- `reset()` returns `obs` shape `(num_agents, 96, 96, 3)`
+- `step()` returns `reward` shape `(num_agents,)`
+- `terminated`/`truncated` are shared episode flags
+
+```python
+import gymnasium as gym
+import numpy as np
+import gym_multi_car_racing
+
+num_agents = 2
+env = gym.make(
+    "MultiCarRacing-v0",
+    num_agents=num_agents,
+    direction="CCW",
+    use_random_direction=True,
+    backwards_flag=True,
+    h_ratio=0.25,
+    use_ego_color=False,
+)
+
+obs, info = env.reset()
+done = False
+total_reward = np.zeros(num_agents, dtype=np.float32)
+
+while not done:
+    # Either flattened shape (3 * num_agents,) or matrix shape (num_agents, 3)
+    action = np.zeros((num_agents, 3), dtype=np.float32)
 
     obs, reward, terminated, truncated, info = env.step(action)
     done = terminated or truncated
     total_reward += reward
 
-    env.render()
-
-print("individual scores:", total_reward)
+print("per-agent returns:", total_reward)
 ```
 
-Observation shape: `(num_agents, 96, 96, 3)`
-Reward shape: `(num_agents,)`
+## Shapes By Mode
 
+| Mode              | `reset()` observation | `step(action)` expected action | `step()` reward |
+| ----------------- | --------------------- | ------------------------------ | --------------- |
+| `num_agents == 1` | `(96, 96, 3)`         | `(3,)` or `(1, 3)`             | scalar `float`  |
+| `num_agents > 1`  | `(N, 96, 96, 3)`      | `(3N,)` or `(N, 3)`            | `(N,)` array    |
 
-## Environment Parameters
-
-| Parameter              |  Type | Description                                         |
-| ---------------------- | :---: | --------------------------------------------------- |
-| `num_agents`           |  int  | Number of agents in environment (default: 2)        |
-| `direction`            |  str  | Winding direction of the track (`'CW'` or `'CCW'`)  |
-| `use_random_direction` |  bool | Randomize winding direction (overrides `direction`) |
-| `backwards_flag`       |  bool | Shows a small flag if agent drives backwards        |
-| `h_ratio`              | float | Controls horizontal agent location in observation   |
-| `use_ego_color`        |  bool | If enabled, ego vehicle has consistent color        |
-
-
-## Single-Agent Mode
-
-The original single-agent CarRacing behavior can be created via:
-
-```python
-env = gym.make(
-    "MultiCarRacing-v0",
-    num_agents=1,
-    use_random_direction=False,
-    backwards_flag=False
-)
-```
-
+Where `N = num_agents`.
 
 ## Acknowledgment
 
 This work builds upon:
 
-* OpenAI Gym’s CarRacing environment (2016)
-* Multi-Car Racing extension by the MIT Distributed Robotics Laboratory (2020)
+- OpenAI Gym’s CarRacing environment (2016)
+- Multi-Car Racing extension by the MIT Distributed Robotics Laboratory (2020)
 
 All original authors retain their respective copyrights.
-
 
 ## License
 

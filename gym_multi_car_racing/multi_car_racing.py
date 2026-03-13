@@ -166,10 +166,10 @@ class MultiCarRacing(gym.Env, EzPickle):
         self.surf = None  # Main rendering surface for pygame
         self.isopen = True  # Track if window is open
 
-        self.action_lb = np.tile(np.array([-1,+0,+0]), 1)  # self.num_agents)
-        self.action_ub = np.tile(np.array([+1,+1,+1]), 1)  # self.num_agents)
+        self.action_lb = np.tile(np.array([-1, +0, +0], dtype=np.float32), self.num_agents)
+        self.action_ub = np.tile(np.array([+1, +1, +1], dtype=np.float32), self.num_agents)
 
-        self.action_space = spaces.Box( self.action_lb, self.action_ub, dtype=np.float32)  # (steer, gas, brake) x N
+        self.action_space = spaces.Box(self.action_lb, self.action_ub, dtype=np.float32)
         self.observation_space = spaces.Box(low=0, high=255, shape=(STATE_H, STATE_W, 3), dtype=np.uint8)
 
     def _destroy(self):
@@ -181,6 +181,17 @@ class MultiCarRacing(gym.Env, EzPickle):
 
         for car in self.cars:
             car.destroy()
+
+    def _format_observation(self, observation):
+        observation = np.asarray(observation, dtype=self.observation_space.dtype)
+        if self.num_agents == 1:
+            if observation.shape != self.observation_space.shape:
+                raise ValueError(
+                    f"Single-agent observation shape {observation.shape} does not match "
+                    f"observation space {self.observation_space.shape}"
+                )
+            return observation
+        return observation
 
     def _create_track(self):
         CHECKPOINTS = 12
@@ -414,7 +425,7 @@ class MultiCarRacing(gym.Env, EzPickle):
                 wheel.car_id = car_id
 
         # Get initial observation via step with no action
-        obs = self.step(None)[0]
+        obs = self._format_observation(self.step(None)[0])
         info = {}
         return obs, info
 
@@ -427,12 +438,16 @@ class MultiCarRacing(gym.Env, EzPickle):
         """
 
         if action is not None:
-            # NOTE: re-shape action as input action is flattened
+            # Box2D setters expect plain float values, not numpy scalar/array objects.
+            action = np.asarray(action, dtype=np.float32)
             action = np.reshape(action, (self.num_agents, -1))
             for car_id, car in enumerate(self.cars):
-                car.steer(-action[car_id][0])
-                car.gas(action[car_id][1])
-                car.brake(action[car_id][2])
+                steer = float(action[car_id][0])
+                gas = float(action[car_id][1])
+                brake = float(action[car_id][2])
+                car.steer(-steer)
+                car.gas(gas)
+                car.brake(brake)
 
         for car in self.cars:
             car.step(1.0/FPS)
@@ -517,7 +532,14 @@ class MultiCarRacing(gym.Env, EzPickle):
                     done = True
                     step_reward[car_id] = -100
 
-        return self.state, step_reward, done, False, {}
+        if self.num_agents == 1:
+            observation = self._format_observation(self.state)
+            reward = float(step_reward[0])
+        else:
+            observation = self._format_observation(self.state)
+            reward = step_reward.astype(np.float32)
+
+        return observation, reward, done, False, {}
 
     def render(self, mode='human'):
         if mode is None:
@@ -537,7 +559,10 @@ class MultiCarRacing(gym.Env, EzPickle):
             self._render_split_screen()
             return None
         
-        return np.stack(result, axis=0)
+        frames = np.stack(result, axis=0)
+        if self.num_agents == 1:
+            return frames[0]
+        return frames
 
     def _render_split_screen(self):
         """ Render all car views in a 2D grid, scaling to fit display if needed. """
