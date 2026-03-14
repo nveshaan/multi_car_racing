@@ -5,13 +5,32 @@
 
 <img width="100%" src="https://user-images.githubusercontent.com/11874191/98051650-5339d900-1e02-11eb-8b75-7f241d8687ef.gif"></img>
 
-This repository contains `MultiCarRacing-v0`, a multiplayer variant of Gym’s original `CarRacing-v0` environment.
+This repository contains `MultiCarRacing-v1`, a multiplayer variant of Gym’s original `CarRacing-v0` environment.
 
-This environment supports both continuous and discrete control. The state consists of 96x96 RGB pixels for each player. The per-player reward is `-0.1` every timestep and `+1000/num_tiles * (num_agents - past_visitors)/num_agents` for each tile visited.
+This environment supports both continuous and discrete control. The state consists of 96x96 RGB pixels for each player. The per-player reward is `-0.1` every timestep and a tile-visit bonus scaled by opponent coverage for each new tile visited.
 
-For example, in a race with 2 agents, the first agent to visit a tile receives a reward of `+1000/num_tiles` and the second agent receives `+500/num_tiles` for that tile. Each agent can only be rewarded once for visiting a particular tile.
+The reward structure is **team-aware**: opponents reaching a tile first reduces your bonus, while teammate impact is configurable. Specifically, for each new tile:
 
-The reward structure is designed to be sufficiently dense for learning basic driving skills while encouraging competition between agents.
+$$\text{reward} = \frac{1000}{\text{num\_tiles}} \times \max\!\left(0,\ 1 - \frac{\text{past\_opponents}}{\text{num\_opponents}} + \alpha\,\frac{\text{past\_teammates}}{\text{num\_teammates}}\right)$$
+
+where $\alpha = \texttt{teammate\_reward\_scale}$.
+
+For example, in a 4-car race with teams `[0, 0, 1, 1]` and `teammate_reward_scale=0.0`:
+
+- You visit a tile nobody has touched → full `+1000/num_tiles`
+- Your teammate visited it first → still full `+1000/num_tiles`
+- One of 2 opponents visited it first → `+500/num_tiles`
+- Both opponents visited it first → `0`
+
+If `teammate_reward_scale > 0`, teammate-first visits can increase your reward.
+If `teammate_reward_scale < 0`, teammate-first visits can reduce your reward.
+
+By default (`team_ids=None`), every car is its own team, so any prior visitor — regardless of car — reduces your reward proportionally.
+
+## Version History
+
+- `v1`: introduces team support via `team_ids`, opponent-aware tile rewards, and `info["team_rewards"]`
+- `v0`: original multi-car release
 
 ## Installation
 
@@ -39,22 +58,26 @@ This launches a two-player variant (each player in its own window) that can be c
 
 ## API Overview
 
-`MultiCarRacing-v0` supports both single-agent and multi-agent usage through one environment class.
+`MultiCarRacing-v1` supports both single-agent and multi-agent usage through one environment class.
 
 ### Constructor Arguments
 
-| Parameter              | Type  | Default | Description                                         |
-| ---------------------- | :---: | :-----: | --------------------------------------------------- |
-| `num_agents`           |  int  |   `2`   | Number of cars/agents                               |
-| `verbose`              |  int  |   `0`   | Prints track-generation diagnostics                 |
-| `direction`            |  str  | `'CCW'` | Track winding direction (`'CW'` or `'CCW'`)         |
-| `use_random_direction` | bool  | `True`  | Randomize winding direction (overrides `direction`) |
-| `backwards_flag`       | bool  | `True`  | Shows a flag when a car is driving backward         |
-| `h_ratio`              | float | `0.75`  | Vertical camera anchor in render                    |
-| `use_ego_color`        | bool  | `False` | Keep ego vehicle color consistent across players    |
-| `continuous`           | bool  | `True`  | Use continuous actions (`Box`) or discrete actions  |
-| `discrete_actions`     | array | `None`  | Optional custom action table for discrete mode      |
-| `render_mode`          |  str  | `None`  | `human`, `rgb_array`, or `state_pixels`             |
+| Parameter               | Type  | Default | Description                                                                                                                                 |
+| ----------------------- | :---: | :-----: | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `num_agents`            |  int  |   `2`   | Number of cars/agents                                                                                                                       |
+| `verbose`               |  int  |   `0`   | Prints track-generation diagnostics                                                                                                         |
+| `direction`             |  str  | `'CCW'` | Track winding direction (`'CW'` or `'CCW'`)                                                                                                 |
+| `use_random_direction`  | bool  | `True`  | Randomize winding direction (overrides `direction`)                                                                                         |
+| `backwards_flag`        | bool  | `True`  | Shows a flag when a car is driving backward                                                                                                 |
+| `h_ratio`               | float | `0.75`  | Vertical camera anchor in render                                                                                                            |
+| `use_ego_color`         | bool  | `False` | Keep ego vehicle color consistent across players                                                                                            |
+| `continuous`            | bool  | `True`  | Use continuous actions (`Box`) or discrete actions                                                                                          |
+| `discrete_actions`      | array | `None`  | Optional custom action table for discrete mode                                                                                              |
+| `render_mode`           |  str  | `None`  | `human`, `rgb_array`, or `state_pixels`                                                                                                     |
+| `lap_complete_percent`  | float | `0.95`  | Fraction of a lap required before crossing tile 0 finishes a lap                                                                            |
+| `domain_randomize`      | bool  | `False` | Randomize road and grass colors on reset                                                                                                    |
+| `team_ids`              | list  | `None`  | Integer team label per car (length must equal `num_agents`). Cars sharing a team ID are teammates. Defaults to each car being its own team. |
+| `teammate_reward_scale` | float |  `0.0`  | Multiplier for teammate prior coverage in tile reward. `0.0` means neutral teammate effect.                                                 |
 
 ### Spaces
 
@@ -78,10 +101,10 @@ Single-agent mode is compatible with standard Gym/SB3 expectations:
 
 ```python
 import gymnasium as gym
-import gym_multi_car_racing  # registers MultiCarRacing-v0
+import gym_multi_car_racing  # registers MultiCarRacing-v1
 
 env = gym.make(
-    "MultiCarRacing-v0",
+    "MultiCarRacing-v1",
     num_agents=1,
     use_random_direction=False,
     backwards_flag=False,
@@ -107,7 +130,7 @@ import gymnasium as gym
 import gym_multi_car_racing
 
 env = gym.make(
-    "MultiCarRacing-v0",
+    "MultiCarRacing-v1",
     num_agents=1,
     continuous=False,
 )
@@ -131,7 +154,7 @@ import gym_multi_car_racing
 
 num_agents = 2
 env = gym.make(
-    "MultiCarRacing-v0",
+    "MultiCarRacing-v1",
     num_agents=num_agents,
     direction="CCW",
     use_random_direction=True,
@@ -163,7 +186,7 @@ import numpy as np
 import gym_multi_car_racing
 
 num_agents = 2
-env = gym.make("MultiCarRacing-v0", num_agents=num_agents, continuous=False)
+env = gym.make("MultiCarRacing-v1", num_agents=num_agents, continuous=False)
 
 obs, info = env.reset()
 action = np.array([0, 3], dtype=np.int64)  # one discrete action index per agent
@@ -193,6 +216,50 @@ When `continuous=False` and `discrete_actions` is not provided, the following st
 
 Where `N = num_agents`.
 
+## Teams
+
+Assign cars to teams by passing a `team_ids` list. Teammate influence can be controlled with `teammate_reward_scale`.
+
+```python
+import gymnasium as gym
+import gym_multi_car_racing
+
+# 4 cars: cars 0 & 1 on team 0, cars 2 & 3 on team 1
+env = gym.make(
+    "MultiCarRacing-v1",
+    num_agents=4,
+    team_ids=[0, 0, 1, 1],
+    teammate_reward_scale=0.25,
+)
+obs, info = env.reset()
+
+obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
+print(info["team_rewards"])  # e.g. {0: 0.42, 1: -0.2}
+```
+
+`teammate_reward_scale` quick guide:
+
+- `0.0`: teammate-neutral (current default)
+- `>0.0`: cooperative shaping (teammate prior visits boost your tile reward)
+- `<0.0`: anti-coordination shaping (teammate prior visits reduce your tile reward)
+
+The `info` dict returned by `step()` always contains:
+
+- `"team_rewards"`: `{team_id: float}` — summed step reward across all cars in each team
+
+When a lap finishes it additionally contains:
+
+- `"lap_finished"`: `True`
+- `"lap_finished_agents"`: boolean array of which agents finished
+- `"winner"`: car index of the first finisher
+
+## Reset Options
+
+When `domain_randomize=True`, `reset(options={"randomize": ...})` follows the Gymnasium `CarRacing-v3` behavior:
+
+- `True`: sample a new road and grass palette for this episode
+- `False`: keep the current palette
+
 ## Render Guide
 
 `render_mode` controls what `render()` returns and how it is displayed:
@@ -207,7 +274,7 @@ Where `N = num_agents`.
 import gymnasium as gym
 import gym_multi_car_racing
 
-env = gym.make("MultiCarRacing-v0", num_agents=1, render_mode="human")
+env = gym.make("MultiCarRacing-v1", num_agents=1, render_mode="human")
 obs, info = env.reset()
 
 for _ in range(1000):
