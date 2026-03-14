@@ -1,5 +1,3 @@
-__credits__ = ["Andrea PIERRÉ"]
-
 import math
 
 import numpy as np

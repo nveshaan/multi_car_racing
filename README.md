@@ -11,9 +11,14 @@ This environment supports both continuous and discrete control. The state consis
 
 The reward structure is **team-aware**: opponents reaching a tile first reduces your bonus, while teammate impact is configurable. Specifically, for each new tile:
 
-$$\text{reward} = \frac{1000}{\text{num\_tiles}} \times \max\!\left(0,\ 1 - \frac{\text{past\_opponents}}{\text{num\_opponents}} + \alpha\,\frac{\text{past\_teammates}}{\text{num\_teammates}}\right)$$
-
-where $\alpha = \texttt{teammate\_reward\_scale}$.
+```text
+alpha = teammate_reward_scale
+reward_factor = max(
+    0,
+    1 - (past_opponents / num_opponents) + alpha * (past_teammates / num_teammates),
+)
+reward = (1000 / num_tiles) * reward_factor
+```
 
 For example, in a 4-car race with teams `[0, 0, 1, 1]` and `teammate_reward_scale=0.0`:
 
@@ -26,11 +31,6 @@ If `teammate_reward_scale > 0`, teammate-first visits can increase your reward.
 If `teammate_reward_scale < 0`, teammate-first visits can reduce your reward.
 
 By default (`team_ids=None`), every car is its own team, so any prior visitor — regardless of car — reduces your reward proportionally.
-
-## Version History
-
-- `v1`: introduces team support via `team_ids`, opponent-aware tile rewards, and `info["team_rewards"]`
-- `v0`: original multi-car release
 
 ## Installation
 
@@ -314,6 +314,11 @@ This work builds upon:
 - Multi-Car Racing extension by the MIT Distributed Robotics Laboratory (2020)
 
 All original authors retain their respective copyrights.
+
+## Version History
+
+- `v1`: introduces team support via `team_ids`, opponent-aware tile rewards, and `info["team_rewards"]`
+- `v0`: original multi-car release
 
 ## License
 
