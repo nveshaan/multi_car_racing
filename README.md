@@ -70,7 +70,8 @@ This launches a two-player variant (each player in its own window) that can be c
 | `use_random_direction`  | bool  | `True`  | Randomize winding direction (overrides `direction`)                                                                                         |
 | `backwards_flag`        | bool  | `True`  | Shows a flag when a car is driving backward                                                                                                 |
 | `h_ratio`               | float | `0.75`  | Vertical camera anchor in render                                                                                                            |
-| `use_ego_color`         | bool  | `False` | Keep ego vehicle color consistent across players                                                                                            |
+| `use_ego_color`         | bool  | `False` | Enable role-relative coloring per viewport: ego, teammate(s), and opponent(s) use consistent role colors across all player views.           |
+| `human_show_team_colors`| bool  | `False` | When `True`, human rendering shows persistent team colors even if `use_ego_color=True`; role-relative colors still apply to array/state renders. |
 | `continuous`            | bool  | `True`  | Use continuous actions (`Box`) or discrete actions                                                                                          |
 | `discrete_actions`      | array | `None`  | Optional custom action table for discrete mode                                                                                              |
 | `render_mode`           |  str  | `None`  | `human`, `rgb_array`, or `state_pixels`                                                                                                     |
@@ -220,6 +221,12 @@ Where `N = num_agents`.
 
 Assign cars to teams by passing a `team_ids` list. Teammate influence can be controlled with `teammate_reward_scale`.
 
+Color behavior:
+
+- With `use_ego_color=False`: each team gets a unique persistent color.
+- With `use_ego_color=True`: each viewport uses consistent role colors (`ego`, `teammate`, `opponent`) regardless of absolute car/team palette.
+- With `human_show_team_colors=True`: human mode shows team colors, while non-human renders can still use role-relative colors when `use_ego_color=True`.
+
 ```python
 import gymnasium as gym
 import gym_multi_car_racing
@@ -301,10 +308,6 @@ For frame arrays (no window), use `render_mode="rgb_array"` and call:
 ```python
 frame = vec_env.render()
 ```
-
-### Quit behavior
-
-When the Pygame window close button is pressed (`QUIT` event), the environment closes and exits immediately.
 
 ## Acknowledgment
 

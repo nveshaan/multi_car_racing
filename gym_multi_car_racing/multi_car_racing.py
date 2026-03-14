@@ -1,4 +1,5 @@
 import math
+import colorsys
 
 import numpy as np
 
@@ -69,6 +70,10 @@ CAR_COLORS = [
     (0.8, 0.0, 0.8),
     (0.8, 0.8, 0.0),
 ]
+
+EGO_COLOR = (0.85, 0.10, 0.10)
+TEAMMATE_COLOR = (0.10, 0.80, 0.10)
+OPPONENT_COLOR = (0.10, 0.10, 0.85)
 
 LINE_SPACING = 5
 LATERAL_SPACING = 3
@@ -172,6 +177,7 @@ class MultiCarRacing(gym.Env, EzPickle):
         backwards_flag: bool = True,
         h_ratio: float = 0.75,
         use_ego_color: bool = False,
+        human_show_team_colors: bool = False,
         continuous: bool = True,
         discrete_actions: np.ndarray | None = None,
         render_mode: str | None = None,
@@ -195,6 +201,7 @@ class MultiCarRacing(gym.Env, EzPickle):
             backwards_flag,
             h_ratio,
             use_ego_color,
+            human_show_team_colors,
             continuous,
             discrete_actions,
             render_mode,
@@ -215,8 +222,10 @@ class MultiCarRacing(gym.Env, EzPickle):
         self.backwards_flag = backwards_flag
         self.h_ratio = h_ratio
         self.use_ego_color = use_ego_color
+        self.human_show_team_colors = human_show_team_colors
         self.team_ids = np.array(team_ids, dtype=np.int32)
         self.teammate_reward_scale = float(teammate_reward_scale)
+        self.team_color_map = self._build_team_color_map()
 
         self.np_random = np.random.default_rng()
         self._init_colors()
@@ -289,6 +298,20 @@ class MultiCarRacing(gym.Env, EzPickle):
             shape=obs_shape,
             dtype=np.uint8,
         )
+
+    def _build_team_color_map(self):
+        unique_teams = np.unique(self.team_ids)
+        team_color_map = {}
+
+        if len(unique_teams) <= len(CAR_COLORS):
+            for idx, team_id in enumerate(unique_teams):
+                team_color_map[int(team_id)] = CAR_COLORS[idx]
+            return team_color_map
+
+        for idx, team_id in enumerate(unique_teams):
+            hue = idx / len(unique_teams)
+            team_color_map[int(team_id)] = colorsys.hsv_to_rgb(hue, 0.8, 0.85)
+        return team_color_map
 
     def _init_colors(self):
         if self.domain_randomize:
@@ -566,7 +589,8 @@ class MultiCarRacing(gym.Env, EzPickle):
             new_y = pos_y + dy + (LATERAL_SPACING * np.cos(norm_theta) * side)
 
             car = car_dynamics.Car(self.world, angle, new_x, new_y)
-            car.hull.color = CAR_COLORS[car_id % len(CAR_COLORS)]
+            car_team = int(self.team_ids[car_id])
+            car.hull.color = self.team_color_map[car_team]
             self.cars[car_id] = car
 
             for wheel in car.wheels:
@@ -800,12 +824,19 @@ class MultiCarRacing(gym.Env, EzPickle):
         self._render_road(surf, zoom, translation, angle)
 
         original_colors = None
-        if self.use_ego_color:
+        apply_role_colors = self.use_ego_color and not (
+            mode == "human" and self.human_show_team_colors
+        )
+        if apply_role_colors:
             original_colors = [tuple(car.hull.color) for car in self.cars]
+            ego_team = int(self.team_ids[car_id])
             for idx, car in enumerate(self.cars):
-                car.hull.color = (0.0, 0.0, 0.8)
                 if idx == car_id:
-                    car.hull.color = (0.8, 0.0, 0.0)
+                    car.hull.color = EGO_COLOR
+                elif int(self.team_ids[idx]) == ego_team:
+                    car.hull.color = TEAMMATE_COLOR
+                else:
+                    car.hull.color = OPPONENT_COLOR
 
         for car in self.cars:
             car.draw(
