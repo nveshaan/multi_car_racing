@@ -46,7 +46,7 @@ This launches a two-player variant (each player in its own window) that can be c
 | Parameter              | Type  | Default | Description                                         |
 | ---------------------- | :---: | :-----: | --------------------------------------------------- |
 | `num_agents`           |  int  |   `2`   | Number of cars/agents                               |
-| `verbose`              |  int  |   `1`   | Prints track-generation diagnostics                 |
+| `verbose`              |  int  |   `0`   | Prints track-generation diagnostics                 |
 | `direction`            |  str  | `'CCW'` | Track winding direction (`'CW'` or `'CCW'`)         |
 | `use_random_direction` | bool  | `True`  | Randomize winding direction (overrides `direction`) |
 | `backwards_flag`       | bool  | `True`  | Shows a flag when a car is driving backward         |
@@ -64,7 +64,7 @@ This launches a two-player variant (each player in its own window) that can be c
 - Discrete mode (`continuous=False`):
   - single-agent: `action_space = Discrete(n_actions)`
   - multi-agent: `action_space = MultiDiscrete([n_actions] * num_agents)`
-  - default action table has 7 actions: noop, left, right, gas, brake, left+gas, right+gas
+    - default action table follows standard Gymnasium CarRacing with 5 actions: noop, left, right, gas, brake
 - Observation space: `Box(low=0, high=255, shape=(96, 96, 3), dtype=uint8)`
 
 In all modes, each decoded action is interpreted as `(steer, gas, brake)` per car.
@@ -172,7 +172,7 @@ obs, reward, terminated, truncated, info = env.step(action)
 
 ### Default Discrete Action Mapping
 
-When `continuous=False` and `discrete_actions` is not provided, the following action table is used:
+When `continuous=False` and `discrete_actions` is not provided, the following standard CarRacing action table is used:
 
 | Action Index | `(steer, gas, brake)` | Meaning     |
 | ------------ | --------------------- | ----------- |
@@ -181,8 +181,6 @@ When `continuous=False` and `discrete_actions` is not provided, the following ac
 | `2`          | `(1.0, 0.0, 0.0)`     | Steer right |
 | `3`          | `(0.0, 1.0, 0.0)`     | Gas         |
 | `4`          | `(0.0, 0.0, 0.8)`     | Brake       |
-| `5`          | `(-1.0, 1.0, 0.0)`    | Left + gas  |
-| `6`          | `(1.0, 1.0, 0.0)`     | Right + gas |
 
 ## Shapes By Mode
 
@@ -194,6 +192,52 @@ When `continuous=False` and `discrete_actions` is not provided, the following ac
 | Multi-agent + discrete (`N > 1`)   | `(N, 96, 96, 3)`      | `(N,)` integer indices         | `(N,)` array    |
 
 Where `N = num_agents`.
+
+## Render Guide
+
+`render_mode` controls what `render()` returns and how it is displayed:
+
+- `human`: opens a Pygame window and draws frames to screen
+- `rgb_array`: returns rendered image array(s) for visualization pipelines
+- `state_pixels`: returns 96x96 state image array(s) used for observations
+
+### Non-VecEnv (plain Gymnasium env)
+
+```python
+import gymnasium as gym
+import gym_multi_car_racing
+
+env = gym.make("MultiCarRacing-v0", num_agents=1, render_mode="human")
+obs, info = env.reset()
+
+for _ in range(1000):
+    obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
+    env.render()
+    if terminated or truncated:
+        break
+```
+
+### VecEnv / SB3 (windowed rendering)
+
+For SB3 vectorized environments, use `render_mode="human"` in `env_kwargs` and call the base env render method:
+
+```python
+vec_env.env_method("render")
+```
+
+This avoids VecEnv image tiling paths and directly updates the Pygame window.
+
+### VecEnv / SB3 (array rendering)
+
+For frame arrays (no window), use `render_mode="rgb_array"` and call:
+
+```python
+frame = vec_env.render()
+```
+
+### Quit behavior
+
+When the Pygame window close button is pressed (`QUIT` event), the environment closes and exits immediately.
 
 ## Acknowledgment
 

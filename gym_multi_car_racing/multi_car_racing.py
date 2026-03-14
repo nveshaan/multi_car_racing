@@ -59,6 +59,9 @@ TRACK_TURN_RATE = 0.31
 TRACK_WIDTH = 40/SCALE
 BORDER = 8/SCALE
 BORDER_MIN_COUNT = 4
+MAX_TRACK_GEN_ATTEMPTS = 50
+MAX_DEST_SEARCH_ROUNDS = 64
+MAX_BETA_ADJUST_ITERS = 128
 
 ROAD_COLOR = [0.4, 0.4, 0.4]
 
@@ -127,7 +130,7 @@ class MultiCarRacing(gym.Env, EzPickle):
         'render_fps': FPS
     }
 
-    def __init__(self, num_agents=2, verbose=1, direction='CCW',
+    def __init__(self, num_agents=2, verbose=0, direction='CCW',
                  use_random_direction=True, backwards_flag=True, h_ratio=0.75,
                  use_ego_color=False, continuous=True, discrete_actions=None,
                  render_mode=None):
@@ -169,7 +172,8 @@ class MultiCarRacing(gym.Env, EzPickle):
         self.continuous = continuous
 
         if discrete_actions is None:
-            # (steer, gas, brake): noop, left, right, gas, brake, left+gas, right+gas
+            # Standard Gymnasium CarRacing discrete API (5 actions):
+            # noop, left, right, gas, brake
             discrete_actions = np.array(
                 [
                     [0.0, 0.0, 0.0],
@@ -177,8 +181,6 @@ class MultiCarRacing(gym.Env, EzPickle):
                     [1.0, 0.0, 0.0],
                     [0.0, 1.0, 0.0],
                     [0.0, 0.0, 0.8],
-                    [-1.0, 1.0, 0.0],
-                    [1.0, 1.0, 0.0],
                 ],
                 dtype=np.float32,
             )
@@ -251,14 +253,22 @@ class MultiCarRacing(gym.Env, EzPickle):
         no_freeze = 2500
         visited_other_side = False
         while True:
+            if not np.isfinite([x, y, beta]).all():
+                return False
             alpha = math.atan2(y, x)
+            if not np.isfinite(alpha):
+                return False
             if visited_other_side and alpha > 0:
                 laps += 1
                 visited_other_side = False
             if alpha < 0:
                 visited_other_side = True
                 alpha += 2*math.pi
+            dest_search_rounds = 0
             while True: # Find destination from checkpoints
+                dest_search_rounds += 1
+                if dest_search_rounds > MAX_DEST_SEARCH_ROUNDS:
+                    return False
                 failed = True
                 while True:
                     dest_alpha, dest_x, dest_y = checkpoints[dest_i % len(checkpoints)]
@@ -279,10 +289,19 @@ class MultiCarRacing(gym.Env, EzPickle):
             dest_dx = dest_x - x  # vector towards destination
             dest_dy = dest_y - y
             proj = r1x*dest_dx + r1y*dest_dy  # destination vector projected on rad
-            while beta - alpha >  1.5*math.pi:
-                 beta -= 2*math.pi
+            if not np.isfinite(proj) or not np.isfinite(beta - alpha):
+                return False
+            beta_adjust_iters = 0
+            while beta - alpha > 1.5*math.pi:
+                beta_adjust_iters += 1
+                if beta_adjust_iters > MAX_BETA_ADJUST_ITERS:
+                    return False
+                beta -= 2*math.pi
             while beta - alpha < -1.5*math.pi:
-                 beta += 2*math.pi
+                beta_adjust_iters += 1
+                if beta_adjust_iters > MAX_BETA_ADJUST_ITERS:
+                    return False
+                beta += 2*math.pi
             prev_beta = beta
             proj *= SCALE
             if proj >  0.3:
@@ -296,7 +315,7 @@ class MultiCarRacing(gym.Env, EzPickle):
                  break
             no_freeze -= 1
             if no_freeze==0:
-                 break
+                 return False
         # print "\n".join([str(t) for t in enumerate(track)])
 
         # Find closed loop range i1..i2, first loop should be ignored, second is OK
@@ -402,12 +421,21 @@ class MultiCarRacing(gym.Env, EzPickle):
         shuffle_ids = self.np_random.choice(ids, size=self.num_agents, replace=False)
         self.car_order = {i: shuffle_ids[i] for i in range(self.num_agents)}
 
-        while True:
+        success = False
+        for attempt in range(1, MAX_TRACK_GEN_ATTEMPTS + 1):
             success = self._create_track()
             if success:
                 break
             if self.verbose == 1:
-                print("retry to generate track (normal if there are not many of this messages)")
+                print(
+                    f"retry to generate track ({attempt}/{MAX_TRACK_GEN_ATTEMPTS})"
+                )
+
+        if not success:
+            raise RuntimeError(
+                "Track generation failed repeatedly. "
+                f"Tried {MAX_TRACK_GEN_ATTEMPTS} attempts without success."
+            )
 
         (angle, pos_x, pos_y) = self.track[0][1:4]
         car_width = car_dynamics.SIZE * (car_dynamics.WHEEL_W * 2 \
@@ -492,7 +520,7 @@ class MultiCarRacing(gym.Env, EzPickle):
         self.world.Step(1.0/FPS, 6*30, 2*30)
         self.t += 1.0/FPS
 
-        self.state = self.render("state_pixels")
+        self.state = self._render_frames("state_pixels")
 
         step_reward = np.zeros(self.num_agents)
         done = False
@@ -570,6 +598,9 @@ class MultiCarRacing(gym.Env, EzPickle):
                     done = True
                     step_reward[car_id] = -100
 
+        if not self.isopen:
+            done = True
+
         if self.num_agents == 1:
             observation = self._format_observation(self.state)
             reward = float(step_reward[0])
@@ -579,28 +610,38 @@ class MultiCarRacing(gym.Env, EzPickle):
 
         return observation, reward, done, False, {}
 
-    def render(self, mode='human'):
-        if mode is None:
-            mode = self.render_mode
-        assert mode in ['human', 'state_pixels', 'rgb_array']
+    def _render_frames(self, mode):
+        assert mode in ['state_pixels', 'rgb_array']
 
-        # Render each car's view to its own surface
         result = []
         for cur_car_id in range(self.num_agents):
             frame = self._render_window(cur_car_id, mode)
-            # Only collect frames for array-returning modes
-            if mode != 'human':
-                result.append(frame)
-        
-        # For human mode, create a split-screen display and return None
-        if mode == 'human':
-            self._render_split_screen()
-            return None
-        
+            result.append(frame)
+
         frames = np.stack(result, axis=0)
         if self.num_agents == 1:
             return frames[0]
         return frames
+
+    def render(self, mode=None):
+        # Support both Gymnasium-style render_mode and legacy explicit mode argument.
+        if mode is None:
+            mode = self.render_mode
+        if mode is None:
+            # VecEnv image collection calls env.render() with no mode.
+            # Default to rgb_array so vectorized rendering can tile frames.
+            mode = 'rgb_array'
+        assert mode in ['human', 'state_pixels', 'rgb_array']
+
+        if mode == 'human':
+            if not self.isopen:
+                return None
+            for cur_car_id in range(self.num_agents):
+                self._render_window(cur_car_id, 'human')
+            self._render_split_screen()
+            return None
+
+        return self._render_frames(mode)
 
     def _render_split_screen(self):
         """ Render all car views in a 2D grid, scaling to fit display if needed. """
@@ -715,7 +756,10 @@ class MultiCarRacing(gym.Env, EzPickle):
                 label = font.render(f"Player {car_id + 1}", True, (255, 255, 255))
                 self.display_screen.blit(label, (x_pos + 10, y_pos + 10))
         
-        pygame.event.pump()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.close()
+                raise SystemExit(0)
         pygame.display.flip()
         self.clock.tick(FPS)
 
