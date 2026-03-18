@@ -108,7 +108,6 @@ class FrictionDetector(contactListener):
         if not tile:
             return
 
-        tile.color[:] = self.env.road_color
         if not obj or "tiles" not in obj.__dict__:
             return
 
@@ -245,6 +244,8 @@ class MultiCarRacing(gym.Env, EzPickle):
 
         self.road = None
         self.road_poly = []
+        self.road_poly_original_colors = []  # Store original colors for per-agent rendering
+        self.road_poly_tile_indices = set()  # Track which indices in road_poly are tiles (not borders)
         self.road_poly_shapely = []
         self.track = []
         self.cars = [None] * num_agents
@@ -256,6 +257,9 @@ class MultiCarRacing(gym.Env, EzPickle):
         self.new_lap = np.zeros(num_agents, dtype=bool)
         self.driving_backward = np.zeros(num_agents, dtype=bool)
         self.driving_on_grass = np.zeros(num_agents, dtype=bool)
+        self.agent_terminated = np.zeros(num_agents, dtype=bool)
+        self.agent_finish_position = np.full(num_agents, -1, dtype=np.int32)
+        self.finish_counter = 0
 
         self.fd_tile = fixtureDef(
             shape=polygonShape(vertices=[(0, 0), (1, 0), (1, -1), (0, -1)])
@@ -531,11 +535,15 @@ class MultiCarRacing(gym.Env, EzPickle):
             tile.userData = tile
             color_shift = 0.01 * (index % 3) * 255
             tile.color = np.clip(self.road_color + color_shift, 0, 255)
+            tile.original_color = tile.color.copy()  # Store original color for per-agent rendering
             tile.road_visited = [False] * self.num_agents
             tile.road_friction = 1.0
             tile.idx = index
             tile.fixtures[0].sensor = True
+            # Track this as a tile polygon (not a border)
+            self.road_poly_tile_indices.add(len(self.road_poly))
             self.road_poly.append(([road1_l, road1_r, road2_r, road2_l], tile.color))
+            self.road_poly_original_colors.append(([road1_l, road1_r, road2_r, road2_l], tile.original_color.copy()))
             self.road.append(tile)
 
             if border[index]:
@@ -556,12 +564,10 @@ class MultiCarRacing(gym.Env, EzPickle):
                     x2 + side * (TRACK_WIDTH + BORDER) * math.cos(beta2),
                     y2 + side * (TRACK_WIDTH + BORDER) * math.sin(beta2),
                 )
-                self.road_poly.append(
-                    (
-                        [b1_l, b1_r, b2_r, b2_l],
-                        (255, 255, 255) if index % 2 == 0 else (255, 0, 0),
-                    )
-                )
+                border_color = (255, 255, 255) if index % 2 == 0 else (255, 0, 0)
+                self.road_poly.append(([b1_l, b1_r, b2_r, b2_l], border_color))
+                # Add border to original colors too (borders don't change color)
+                self.road_poly_original_colors.append(([b1_l, b1_r, b2_r, b2_l], border_color))
 
         self.track = track
         self.road_poly_shapely = [Polygon(poly) for poly, _ in self.road_poly]
@@ -610,9 +616,14 @@ class MultiCarRacing(gym.Env, EzPickle):
         self.new_lap = np.zeros(self.num_agents, dtype=bool)
         self.driving_backward = np.zeros(self.num_agents, dtype=bool)
         self.driving_on_grass = np.zeros(self.num_agents, dtype=bool)
+        self.agent_terminated = np.zeros(self.num_agents, dtype=bool)
+        self.agent_finish_position = np.full(self.num_agents, -1, dtype=np.int32)
+        self.finish_counter = 0
         self.t = 0.0
         self.isopen = True
         self.road_poly = []
+        self.road_poly_original_colors = []
+        self.road_poly_tile_indices = set()
         self.road_poly_shapely = []
 
         if self.domain_randomize:
@@ -673,6 +684,8 @@ class MultiCarRacing(gym.Env, EzPickle):
     def _update_driving_flags(self, step_reward):
         track_xy = np.array(self.track)[:, 2:]
         for car_id, car in enumerate(self.cars):
+            if car is None:
+                continue
             velocity = car.hull.linearVelocity
             if np.linalg.norm(velocity) > 0.5:
                 car_angle = -math.atan2(velocity[0], velocity[1])
@@ -709,13 +722,16 @@ class MultiCarRacing(gym.Env, EzPickle):
     def step(self, action):
         if action is not None:
             decoded_action = self._decode_action(action)
+            # Only apply actions to agents that haven't terminated yet
             for car_id, car in enumerate(self.cars):
-                car.steer(-float(decoded_action[car_id][0]))
-                car.gas(float(decoded_action[car_id][1]))
-                car.brake(float(decoded_action[car_id][2]))
+                if not self.agent_terminated[car_id] and car is not None:
+                    car.steer(-float(decoded_action[car_id][0]))
+                    car.gas(float(decoded_action[car_id][1]))
+                    car.brake(float(decoded_action[car_id][2]))
 
-        for car in self.cars:
-            car.step(1.0 / FPS)
+        for idx, car in enumerate(self.cars):
+            if car is not None:
+                car.step(1.0 / FPS)
         self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
         self.t += 1.0 / FPS
 
@@ -729,32 +745,61 @@ class MultiCarRacing(gym.Env, EzPickle):
         if action is not None:
             self.reward -= 0.1
             for car in self.cars:
-                car.fuel_spent = 0.0
+                if car is not None:
+                    car.fuel_spent = 0.0
 
             step_reward = self.reward - self.prev_reward
             self._update_driving_flags(step_reward)
             self.prev_reward = self.reward.copy()
 
+            # Check for agents completing the lap
             lap_finished_agents = np.logical_or(
                 self.new_lap,
                 np.equal(self.tile_visited_count, len(self.track)),
             )
-            if np.any(lap_finished_agents):
-                terminated = True
-                info["lap_finished"] = True
-                info["lap_finished_agents"] = lap_finished_agents.copy()
-                info["winner"] = int(np.flatnonzero(lap_finished_agents)[0])
+            # Mark newly-finished agents as terminated and assign finish position
+            newly_finished = lap_finished_agents & ~self.agent_terminated
+            for idx in np.where(newly_finished)[0]:
+                self.finish_counter += 1
+                self.agent_finish_position[idx] = self.finish_counter
+                place_str = f"{self.finish_counter}{['st', 'nd', 'rd', 'th'][(min(self.finish_counter, 4) - 1)]}"
+                print(f"Agent {idx} finished! Position: {place_str} Place")
+                # Remove terminated car from physics world to prevent collisions
+                if self.cars[idx] is not None:
+                    self.cars[idx].destroy()
+                    self.cars[idx] = None
+            self.agent_terminated |= newly_finished
 
+            # Check for out-of-bounds agents
             out_of_bounds_agents = np.zeros(self.num_agents, dtype=bool)
             for car_id, car in enumerate(self.cars):
-                x, y = car.hull.position
-                if abs(x) > PLAYFIELD or abs(y) > PLAYFIELD:
-                    terminated = True
-                    step_reward[car_id] = -100.0
-                    out_of_bounds_agents[car_id] = True
+                if not self.agent_terminated[car_id]:
+                    x, y = car.hull.position
+                    if abs(x) > PLAYFIELD or abs(y) > PLAYFIELD:
+                        step_reward[car_id] = -100.0
+                        out_of_bounds_agents[car_id] = True
+                        self.agent_terminated[car_id] = True
+                        # Print out-of-bounds status
+                        print(f"Agent {car_id} went out of bounds!")
+                        # Remove terminated car from physics world to prevent collisions
+                        if self.cars[car_id] is not None:
+                            self.cars[car_id].destroy()
+                            self.cars[car_id] = None
+
+            # Store per-agent termination info for this step
+            agent_terminated_this_step = newly_finished | out_of_bounds_agents
+            
+            # Reset grid layout if agents terminated (for display recalculation)
+            if np.any(agent_terminated_this_step):
+                self._grid_cols = None
+                self._grid_rows = None
+            
+            if np.any(newly_finished):
+                info["lap_finished"] = True
+                info["lap_finished_agents"] = newly_finished.copy()
+                info["winner"] = int(np.flatnonzero(newly_finished)[0])
 
             if np.any(out_of_bounds_agents):
-                info["lap_finished"] = False
                 info["out_of_bounds_agents"] = out_of_bounds_agents.copy()
 
             unique_teams = np.unique(self.team_ids)
@@ -762,6 +807,15 @@ class MultiCarRacing(gym.Env, EzPickle):
                 int(t): float(step_reward[self.team_ids == t].sum())
                 for t in unique_teams
             }
+            
+            # Store per-agent termination status
+            info["agent_terminated_this_step"] = agent_terminated_this_step.copy()
+            info["agent_alive"] = ~self.agent_terminated.copy()
+            info["agent_finish_position"] = self.agent_finish_position.copy()
+            
+            # Global termination only when all agents are terminated
+            if np.all(self.agent_terminated):
+                terminated = True
 
         if not self.isopen:
             terminated = True
@@ -789,7 +843,14 @@ class MultiCarRacing(gym.Env, EzPickle):
 
     def _render_frames(self, mode: str):
         assert mode in ["state_pixels", "rgb_array"]
-        frames = [self._render_car_view(car_id, mode) for car_id in range(self.num_agents)]
+        frames = []
+        for car_id in range(self.num_agents):
+            # Skip rendering terminated agents (return blank frame)
+            if self.agent_terminated[car_id]:
+                frame = np.zeros((STATE_H, STATE_W, 3), dtype=np.uint8)
+            else:
+                frame = self._render_car_view(car_id, mode)
+            frames.append(frame)
         frames = np.stack(frames, axis=0)
         if self.num_agents == 1:
             return frames[0]
@@ -808,9 +869,21 @@ class MultiCarRacing(gym.Env, EzPickle):
         if "t" not in self.__dict__:
             return None
 
+        focus_car = self.cars[car_id]
+        # Skip rendering if car is terminated (destroyed)
+        if focus_car is None:
+            if mode == "human":
+                self.screen[car_id] = pygame.Surface((WINDOW_W, WINDOW_H))
+                self.screen[car_id].fill((0, 0, 0))
+                return self.isopen
+            elif mode == "rgb_array":
+                return np.zeros((VIDEO_H, VIDEO_W, 3), dtype=np.uint8)
+            elif mode == "state_pixels":
+                return np.zeros((STATE_H, STATE_W, 3), dtype=np.uint8)
+            return None
+
         surf = pygame.Surface((WINDOW_W, WINDOW_H))
 
-        focus_car = self.cars[car_id]
         angle = -focus_car.hull.angle
         zoom = 0.1 * SCALE * max(1 - self.t, 0) + ZOOM * SCALE * min(self.t, 1)
         scroll_x = -(focus_car.hull.position[0]) * zoom
@@ -821,16 +894,22 @@ class MultiCarRacing(gym.Env, EzPickle):
             WINDOW_H * (1.0 - self.h_ratio) + translation[1],
         )
 
-        self._render_road(surf, zoom, translation, angle)
+        self._render_road(surf, zoom, translation, angle, car_id)
 
         original_colors = None
         apply_role_colors = self.use_ego_color and not (
             mode == "human" and self.human_show_team_colors
         )
         if apply_role_colors:
-            original_colors = [tuple(car.hull.color) for car in self.cars]
+            original_colors = [
+                tuple(car.hull.color) if car is not None else None
+                for car in self.cars
+            ]
             ego_team = int(self.team_ids[car_id])
             for idx, car in enumerate(self.cars):
+                if self.agent_terminated[idx] or car is None:
+                    # Skip terminated agents
+                    continue
                 if idx == car_id:
                     car.hull.color = EGO_COLOR
                 elif int(self.team_ids[idx]) == ego_team:
@@ -838,18 +917,21 @@ class MultiCarRacing(gym.Env, EzPickle):
                 else:
                     car.hull.color = OPPONENT_COLOR
 
-        for car in self.cars:
-            car.draw(
-                surf,
-                zoom,
-                translation,
-                angle,
-                mode not in ["state_pixels_list", "state_pixels"],
-            )
+        # Only draw alive agents
+        for idx, car in enumerate(self.cars):
+            if not self.agent_terminated[idx] and car is not None:
+                car.draw(
+                    surf,
+                    zoom,
+                    translation,
+                    angle,
+                    mode not in ["state_pixels_list", "state_pixels"],
+                )
 
         if original_colors is not None:
             for car, color in zip(self.cars, original_colors):
-                car.hull.color = color
+                if car is not None and color is not None:
+                    car.hull.color = color
 
         surf = pygame.transform.flip(surf, False, True)
         self._render_indicators(surf, car_id, WINDOW_W, WINDOW_H)
@@ -868,6 +950,11 @@ class MultiCarRacing(gym.Env, EzPickle):
             pygame.init()
         if not pygame.font.get_init():
             pygame.font.init()
+
+        # Count alive agents for grid layout
+        num_alive = int(np.sum(~self.agent_terminated))
+        if num_alive == 0:
+            return  # No agents to display
 
         if self._grid_cols is None or self.display_screen is None:
             if pygame.display.get_surface() is None:
@@ -892,8 +979,8 @@ class MultiCarRacing(gym.Env, EzPickle):
                 if preferred_viewport_w > 0
                 else 1
             )
-            self._grid_cols = min(self.num_agents, max_cols)
-            self._grid_rows = math.ceil(self.num_agents / self._grid_cols)
+            self._grid_cols = min(num_alive, max_cols)
+            self._grid_rows = math.ceil(num_alive / self._grid_cols)
 
             viewport_w = preferred_viewport_w
             viewport_h = preferred_viewport_h
@@ -921,12 +1008,21 @@ class MultiCarRacing(gym.Env, EzPickle):
         cols = self._grid_cols
         viewport_w = self._grid_viewport_w
         viewport_h = self._grid_viewport_h
+        
+        # Track position in grid for alive agents only
+        alive_position = 0
         for car_id in range(self.num_agents):
+            # Skip terminated agents
+            if self.agent_terminated[car_id]:
+                continue
+                
             if self.screen[car_id] is None:
                 continue
 
-            row = car_id // cols
-            col = car_id % cols
+            row = alive_position // cols
+            col = alive_position % cols
+            alive_position += 1
+            
             scaled_surf = pygame.transform.scale(
                 self.screen[car_id], (viewport_w, viewport_h)
             )
@@ -951,20 +1047,16 @@ class MultiCarRacing(gym.Env, EzPickle):
                     2,
                 )
 
-            font = pygame.font.Font(None, 36)
-            label = font.render(f"Player {car_id + 1}", True, (255, 255, 255))
-            self.display_screen.blit(label, (x_pos + 10, y_pos + 10))
-
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                self.close()
-                raise SystemExit(0)
+                self.isopen = False
+                # Don't return early - let the episode continue to completion
 
         pygame.display.flip()
         if self.clock is not None:
             self.clock.tick(self.metadata["render_fps"])
 
-    def _render_road(self, surface, zoom, translation, angle):
+    def _render_road(self, surface, zoom, translation, angle, agent_id: int):
         bounds = PLAYFIELD
         field = [
             (bounds, bounds),
@@ -988,7 +1080,24 @@ class MultiCarRacing(gym.Env, EzPickle):
                     surface, poly, self.grass_color, zoom, translation, angle
                 )
 
-        for poly, color in self.road_poly:
+        # Render tiles with per-agent visited colors, and borders with fixed colors
+        road_tile_lookup = {
+            poly_idx: tile_idx
+            for tile_idx, poly_idx in enumerate(sorted(self.road_poly_tile_indices))
+        }
+        for poly_idx, (poly, original_color) in enumerate(self.road_poly_original_colors):
+            # If this is a tile polygon, apply per-agent coloring
+            if poly_idx in self.road_poly_tile_indices:
+                tile_number = road_tile_lookup[poly_idx]
+                tile = self.road[tile_number]
+                if tile.road_visited[agent_id]:
+                    color = self.road_color
+                else:
+                    color = original_color
+            else:
+                # It's a border, use stored color
+                color = original_color
+            
             self._draw_colored_polygon(
                 surface,
                 [(point[0], point[1]) for point in poly],
@@ -1132,10 +1241,12 @@ if __name__ == "__main__":
 
         env.render()
 
-        if done or restart:
+        if restart:
             observation, info = env.reset()
             total_reward = np.zeros(num_cars, dtype=np.float32)
             steps = 0
             restart = False
+        elif done:
+            running = False
 
     env.close()

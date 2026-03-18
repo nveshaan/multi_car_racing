@@ -5,7 +5,7 @@
 
 <img width="100%" src="https://user-images.githubusercontent.com/11874191/98051650-5339d900-1e02-11eb-8b75-7f241d8687ef.gif"></img>
 
-This repository contains `MultiCarRacing-v1`, a multiplayer variant of Gym’s original `CarRacing-v0` environment.
+This repository contains `MultiCarRacing-v2`, a multiplayer variant of Gym’s original `CarRacing-v3` environment.
 
 This environment supports both continuous and discrete control. The state consists of 96x96 RGB pixels for each player. The per-player reward is `-0.1` every timestep and a tile-visit bonus scaled by opponent coverage for each new tile visited.
 
@@ -58,27 +58,27 @@ This launches a two-player variant (each player in its own window) that can be c
 
 ## API Overview
 
-`MultiCarRacing-v1` supports both single-agent and multi-agent usage through one environment class.
+`MultiCarRacing-v2` supports both single-agent and multi-agent usage through one environment class.
 
 ### Constructor Arguments
 
-| Parameter               | Type  | Default | Description                                                                                                                                 |
-| ----------------------- | :---: | :-----: | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `num_agents`            |  int  |   `2`   | Number of cars/agents                                                                                                                       |
-| `verbose`               |  int  |   `0`   | Prints track-generation diagnostics                                                                                                         |
-| `direction`             |  str  | `'CCW'` | Track winding direction (`'CW'` or `'CCW'`)                                                                                                 |
-| `use_random_direction`  | bool  | `True`  | Randomize winding direction (overrides `direction`)                                                                                         |
-| `backwards_flag`        | bool  | `True`  | Shows a flag when a car is driving backward                                                                                                 |
-| `h_ratio`               | float | `0.75`  | Vertical camera anchor in render                                                                                                            |
-| `use_ego_color`         | bool  | `False` | Enable role-relative coloring per viewport: ego, teammate(s), and opponent(s) use consistent role colors across all player views.           |
-| `human_show_team_colors`| bool  | `False` | When `True`, human rendering shows persistent team colors even if `use_ego_color=True`; role-relative colors still apply to array/state renders. |
-| `continuous`            | bool  | `True`  | Use continuous actions (`Box`) or discrete actions                                                                                          |
-| `discrete_actions`      | array | `None`  | Optional custom action table for discrete mode                                                                                              |
-| `render_mode`           |  str  | `None`  | `human`, `rgb_array`, or `state_pixels`                                                                                                     |
-| `lap_complete_percent`  | float | `0.95`  | Fraction of a lap required before crossing tile 0 finishes a lap                                                                            |
-| `domain_randomize`      | bool  | `False` | Randomize road and grass colors on reset                                                                                                    |
-| `team_ids`              | list  | `None`  | Integer team label per car (length must equal `num_agents`). Cars sharing a team ID are teammates. Defaults to each car being its own team. |
-| `teammate_reward_scale` | float |  `0.0`  | Multiplier for teammate prior coverage in tile reward. `0.0` means neutral teammate effect.                                                 |
+| Parameter                | Type  | Default | Description                                                                                                                                      |
+| ------------------------ | :---: | :-----: | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `num_agents`             |  int  |   `2`   | Number of cars/agents                                                                                                                            |
+| `verbose`                |  int  |   `0`   | Prints track-generation diagnostics                                                                                                              |
+| `direction`              |  str  | `'CCW'` | Track winding direction (`'CW'` or `'CCW'`)                                                                                                      |
+| `use_random_direction`   | bool  | `True`  | Randomize winding direction (overrides `direction`)                                                                                              |
+| `backwards_flag`         | bool  | `True`  | Shows a flag when a car is driving backward                                                                                                      |
+| `h_ratio`                | float | `0.75`  | Vertical camera anchor in render                                                                                                                 |
+| `use_ego_color`          | bool  | `False` | Enable role-relative coloring per viewport: ego, teammate(s), and opponent(s) use consistent role colors across all player views.                |
+| `human_show_team_colors` | bool  | `False` | When `True`, human rendering shows persistent team colors even if `use_ego_color=True`; role-relative colors still apply to array/state renders. |
+| `continuous`             | bool  | `True`  | Use continuous actions (`Box`) or discrete actions                                                                                               |
+| `discrete_actions`       | array | `None`  | Optional custom action table for discrete mode                                                                                                   |
+| `render_mode`            |  str  | `None`  | `human`, `rgb_array`, or `state_pixels`                                                                                                          |
+| `lap_complete_percent`   | float | `0.95`  | Fraction of a lap required before crossing tile 0 finishes a lap                                                                                 |
+| `domain_randomize`       | bool  | `False` | Randomize road and grass colors on reset                                                                                                         |
+| `team_ids`               | list  | `None`  | Integer team label per car (length must equal `num_agents`). Cars sharing a team ID are teammates. Defaults to each car being its own team.      |
+| `teammate_reward_scale`  | float |  `0.0`  | Multiplier for teammate prior coverage in tile reward. `0.0` means neutral teammate effect.                                                      |
 
 ### Spaces
 
@@ -102,10 +102,10 @@ Single-agent mode is compatible with standard Gym/SB3 expectations:
 
 ```python
 import gymnasium as gym
-import gym_multi_car_racing  # registers MultiCarRacing-v1
+import gym_multi_car_racing
 
 env = gym.make(
-    "MultiCarRacing-v1",
+    "MultiCarRacing-v2",
     num_agents=1,
     use_random_direction=False,
     backwards_flag=False,
@@ -131,7 +131,7 @@ import gymnasium as gym
 import gym_multi_car_racing
 
 env = gym.make(
-    "MultiCarRacing-v1",
+    "MultiCarRacing-v2",
     num_agents=1,
     continuous=False,
 )
@@ -155,7 +155,7 @@ import gym_multi_car_racing
 
 num_agents = 2
 env = gym.make(
-    "MultiCarRacing-v1",
+    "MultiCarRacing-v2",
     num_agents=num_agents,
     direction="CCW",
     use_random_direction=True,
@@ -187,7 +187,7 @@ import numpy as np
 import gym_multi_car_racing
 
 num_agents = 2
-env = gym.make("MultiCarRacing-v1", num_agents=num_agents, continuous=False)
+env = gym.make("MultiCarRacing-v2", num_agents=num_agents, continuous=False)
 
 obs, info = env.reset()
 action = np.array([0, 3], dtype=np.int64)  # one discrete action index per agent
@@ -233,7 +233,7 @@ import gym_multi_car_racing
 
 # 4 cars: cars 0 & 1 on team 0, cars 2 & 3 on team 1
 env = gym.make(
-    "MultiCarRacing-v1",
+    "MultiCarRacing-v2",
     num_agents=4,
     team_ids=[0, 0, 1, 1],
     teammate_reward_scale=0.25,
@@ -260,6 +260,81 @@ When a lap finishes it additionally contains:
 - `"lap_finished_agents"`: boolean array of which agents finished
 - `"winner"`: car index of the first finisher
 
+## PettingZoo Parallel API Wrapper
+
+You can also use this environment through a PettingZoo `ParallelEnv` wrapper.
+
+```python
+from gym_multi_car_racing import parallel_env
+
+env = parallel_env(
+    num_agents=4,
+    continuous=True,
+    team_ids=[0, 0, 1, 1],
+)
+
+obs, infos = env.reset(seed=7)
+
+while env.agents:
+    actions = {
+        agent: env.action_space(agent).sample()
+        for agent in env.agents
+    }
+    obs, rewards, terminations, truncations, infos = env.step(actions)
+
+env.close()
+```
+
+### Agent Termination Semantics (Per-Agent Support)
+
+Both the core `MultiCarRacing` environment and PettingZoo wrapper support **per-agent termination**:
+
+**Individual agents terminate when they:**
+
+- Complete the lap (cross the finish line)
+- Go out of bounds
+
+**The episode continues** while any agent is still alive. The global episode ends only when:
+
+- All agents have terminated, OR
+- The environment is manually closed
+
+**Per-agent termination info in info dict:**
+
+- `alive`: whether this agent is still racing
+- `terminated_this_step`: whether this agent just terminated
+- `lap_finished`: whether this agent completed the lap (if terminated this step)
+- `out_of_bounds`: whether this agent went out of bounds (if terminated this step)
+- `is_winner`: whether this agent was first to finish the lap
+
+**Example with per-agent termination:**
+
+```python
+from gym_multi_car_racing import parallel_env
+
+env = parallel_env(num_agents=3, continuous=False)
+obs, infos = env.reset()
+
+episode_step = 0
+agent_completion_order = []
+
+while env.agents:
+    actions = {agent: env.action_space(agent).sample() for agent in env.agents}
+    obs, rewards, terminations, truncations, infos = env.step(actions)
+    episode_step += 1
+
+    # Track which agents finish and in what order
+    for agent in env.agents:
+        if infos[agent].get("lap_finished"):
+            agent_completion_order.append((agent, episode_step))
+
+    # Remaining agent count
+    print(f"Step {episode_step}: {len(env.agents)} agents still racing")
+
+print(f"Completion order: {agent_completion_order}")
+env.close()
+```
+
 ## Acknowledgment
 
 This work builds upon:
@@ -271,7 +346,8 @@ All original authors retain their respective copyrights.
 
 ## Version History
 
-- `v1`: introduces team support via `team_ids`, opponent-aware tile rewards, and `info["team_rewards"]`
+- `v2`: adds PettingZoo `ParallelEnv` wrapper, per-agent termination semantics, dead-agent removal from physics/observations, and rendering/cleanup improvements
+- `v1`: introduced team support via `team_ids`, opponent-aware tile rewards, and `info["team_rewards"]`
 - `v0`: original multi-car release
 
 ## License

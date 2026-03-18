@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gym-multi-car-racing"
-version = "0.0.1"
+version = "0.0.2"
 description = "Gym Multi Car Racing Environment"
 readme = "README.md"
 authors = [{ name = "Eshaan Naga Venkata" }]
@@ -14,6 +14,7 @@ dependencies = [
     "shapely",
     "numpy",
     "gymnasium",
+    "pettingzoo",
     "pygame",
 ]
 
