@@ -171,6 +171,7 @@ class MultiCarRacing(gym.Env, EzPickle):
         self,
         num_agents: int = 2,
         verbose: bool = False,
+        seed: int | None = None,
         direction: str = "CCW",
         use_random_direction: bool = True,
         backwards_flag: bool = True,
@@ -208,6 +209,7 @@ class MultiCarRacing(gym.Env, EzPickle):
             domain_randomize,
             team_ids,
             teammate_reward_scale,
+            seed,
         )
 
         self.num_agents = num_agents
@@ -226,7 +228,8 @@ class MultiCarRacing(gym.Env, EzPickle):
         self.teammate_reward_scale = float(teammate_reward_scale)
         self.team_color_map = self._build_team_color_map()
 
-        self.np_random = np.random.default_rng()
+        self._seed = seed
+        self.np_random = np.random.default_rng(self._seed)
         self._init_colors()
 
         self.contactListener_keepref = FrictionDetector(self, lap_complete_percent)
@@ -603,7 +606,9 @@ class MultiCarRacing(gym.Env, EzPickle):
                 wheel.car_id = car_id
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
-        super().reset(seed=seed)
+        # Determine which seed to use: explicit reset seed overrides constructor seed
+        effective_seed = seed if seed is not None else self._seed
+        super().reset(seed=effective_seed)
         self._destroy()
         self.world.contactListener_bug_workaround = FrictionDetector(
             self, self.lap_complete_percent
@@ -633,6 +638,9 @@ class MultiCarRacing(gym.Env, EzPickle):
             self._reinit_colors(randomize)
         else:
             self._init_colors()
+
+        # Re-seed RNG for deterministic behavior when a seed is provided
+        self.np_random = np.random.default_rng(effective_seed)
 
         if self.use_random_direction:
             self.episode_direction = self.np_random.choice(["CW", "CCW"])

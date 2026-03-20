@@ -65,6 +65,7 @@ This launches a two-player variant (each player in its own window) that can be c
 | Parameter                | Type  | Default | Description                                                                                                                                      |
 | ------------------------ | :---: | :-----: | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `num_agents`             |  int  |   `2`   | Number of cars/agents                                                                                                                            |
+| `seed`                   |  int  |   `42`  | Seed of the experiment for reproducibility                                                                                                       |
 | `verbose`                |  int  |   `0`   | Prints track-generation diagnostics                                                                                                              |
 | `direction`              |  str  | `'CCW'` | Track winding direction (`'CW'` or `'CCW'`)                                                                                                      |
 | `use_random_direction`   | bool  | `True`  | Randomize winding direction (overrides `direction`)                                                                                              |
