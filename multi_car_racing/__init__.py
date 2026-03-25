@@ -5,7 +5,7 @@ from gymnasium.envs.registration import register
 
 register(
     id='MultiCarRacing-v2',
-    entry_point='gym_multi_car_racing:MultiCarRacing',
+    entry_point='multi_car_racing.multi_car_racing:MultiCarRacing',
     max_episode_steps=1000,
     reward_threshold=900
 )

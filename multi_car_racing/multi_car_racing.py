@@ -1200,7 +1200,7 @@ class MultiCarRacing(gym.Env, EzPickle):
         self.isopen = False
 
 
-if __name__ == "__main__":
+def main():
     num_cars = 2
     car_control_keys = [
         [pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN],
@@ -1258,3 +1258,6 @@ if __name__ == "__main__":
             running = False
 
     env.close()
+
+if __name__ == "__main__":
+    main()

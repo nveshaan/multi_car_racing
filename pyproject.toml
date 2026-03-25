@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "gym-multi-car-racing"
+name = "multi-car-racing"
 version = "0.0.2"
-description = "Gym Multi Car Racing Environment"
+description = "Gymnasium Multi Car Racing Environment"
 readme = "README.md"
 authors = [{ name = "Eshaan Naga Venkata" }]
 license = { text = "MIT" }
@@ -19,4 +19,4 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages = ["gym_multi_car_racing"]
+packages = ["multi_car_racing"]

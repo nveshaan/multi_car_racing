@@ -48,7 +48,7 @@ uv add --editable .
 After installation, you can launch the keyboard demo with:
 
 ```bash
-python -m gym_multi_car_racing.multi_car_racing
+python -m multi_car_racing.multi_car_racing
 ```
 
 This launches a two-player variant (each player in its own window) that can be controlled via the keyboard:
@@ -103,7 +103,7 @@ Single-agent mode is compatible with standard Gym/SB3 expectations:
 
 ```python
 import gymnasium as gym
-import gym_multi_car_racing
+import multi_car_racing
 
 env = gym.make(
     "MultiCarRacing-v2",
@@ -129,7 +129,7 @@ print("episode return:", total_reward)
 
 ```python
 import gymnasium as gym
-import gym_multi_car_racing
+import multi_car_racing
 
 env = gym.make(
     "MultiCarRacing-v2",
@@ -152,7 +152,7 @@ Multi-agent mode returns per-agent tensors:
 ```python
 import gymnasium as gym
 import numpy as np
-import gym_multi_car_racing
+import multi_car_racing
 
 num_agents = 2
 env = gym.make(
@@ -185,7 +185,7 @@ print("per-agent returns:", total_reward)
 ```python
 import gymnasium as gym
 import numpy as np
-import gym_multi_car_racing
+import multi_car_racing
 
 num_agents = 2
 env = gym.make("MultiCarRacing-v2", num_agents=num_agents, continuous=False)
@@ -230,7 +230,7 @@ Color behavior:
 
 ```python
 import gymnasium as gym
-import gym_multi_car_racing
+import multi_car_racing
 
 # 4 cars: cars 0 & 1 on team 0, cars 2 & 3 on team 1
 env = gym.make(
@@ -266,7 +266,7 @@ When a lap finishes it additionally contains:
 You can also use this environment through a PettingZoo `ParallelEnv` wrapper.
 
 ```python
-from gym_multi_car_racing import parallel_env
+from multi_car_racing import parallel_env
 
 env = parallel_env(
     num_agents=4,
@@ -311,7 +311,7 @@ Both the core `MultiCarRacing` environment and PettingZoo wrapper support **per-
 **Example with per-agent termination:**
 
 ```python
-from gym_multi_car_racing import parallel_env
+from multi_car_racing import parallel_env
 
 env = parallel_env(num_agents=3, continuous=False)
 obs, infos = env.reset()
