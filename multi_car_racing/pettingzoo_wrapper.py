@@ -50,6 +50,7 @@ class MultiCarRacingParallelEnv(ParallelEnv):
         self._agent_name_to_idx = {
             agent_name: idx for idx, agent_name in enumerate(self.possible_agents)
         }
+        self.render_mode = env_kwargs.get("render_mode", None)
 
     @lru_cache(maxsize=None)
     def observation_space(self, agent: str) -> spaces.Space:

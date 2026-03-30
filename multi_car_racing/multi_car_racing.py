@@ -196,6 +196,7 @@ class MultiCarRacing(gym.Env, EzPickle):
             self,
             num_agents,
             verbose,
+            seed,
             direction,
             use_random_direction,
             backwards_flag,
@@ -209,7 +210,6 @@ class MultiCarRacing(gym.Env, EzPickle):
             domain_randomize,
             team_ids,
             teammate_reward_scale,
-            seed,
         )
 
         self.num_agents = num_agents
