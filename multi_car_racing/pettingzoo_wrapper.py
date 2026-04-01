@@ -35,6 +35,10 @@ class MultiCarRacingParallelEnv(ParallelEnv):
     - `lap_finished`: which agents finished the lap
     - `out_of_bounds`: which agents went out of bounds
     - `is_winner`: whether this agent first crossed the finish line
+
+    CTDE support:
+    - `ctde`: If True, enable centralized training decentralized execution with global observations.
+    - `include_actions`: If True, append previous actions of all agents to observations.
     """
 
     metadata = {
@@ -43,6 +47,8 @@ class MultiCarRacingParallelEnv(ParallelEnv):
     }
 
     def __init__(self, **env_kwargs: Any) -> None:
+        self.ctde = env_kwargs.pop("ctde", False)
+        self.include_actions = env_kwargs.pop("include_actions", False)
         self._env = MultiCarRacing(**env_kwargs)
         self.possible_agents = [f"agent_{i}" for i in range(self._env.num_agents)]
         self.agents = self.possible_agents[:]
@@ -52,9 +58,15 @@ class MultiCarRacingParallelEnv(ParallelEnv):
         }
         self.render_mode = env_kwargs.get("render_mode", None)
 
-    @lru_cache(maxsize=None)
     def observation_space(self, agent: str) -> spaces.Space:
-        return spaces.Box(low=0, high=255, shape=(96, 96, 3), dtype=np.uint8)
+        if self.ctde:
+            channels = 3
+            if self.include_actions:
+                channels += 3 if self._env.continuous else 1
+                return spaces.Box(low=-np.inf, high=np.inf, shape=(self._env.num_agents, 96, 96, channels), dtype=np.float32)
+            return spaces.Box(low=0, high=255, shape=(self._env.num_agents, 96, 96, channels), dtype=np.float32)
+        else:
+            return spaces.Box(low=0, high=255, shape=(96, 96, 3), dtype=np.uint8)
 
     @lru_cache(maxsize=None)
     def action_space(self, agent: str) -> spaces.Space:
@@ -71,6 +83,12 @@ class MultiCarRacingParallelEnv(ParallelEnv):
     def reset(self, seed: int | None = None, options: dict | None = None):
         obs, _ = self._env.reset(seed=seed, options=options)
         self.agents = self.possible_agents[:]
+        self.prev_actions = {}
+        for agent in self.possible_agents:
+            if self._env.continuous:
+                self.prev_actions[agent] = np.zeros(3, dtype=np.float32)
+            else:
+                self.prev_actions[agent] = 0
 
         obs_dict = self._obs_to_dict(obs)
         infos = {agent: {} for agent in self.agents}
@@ -91,6 +109,7 @@ class MultiCarRacingParallelEnv(ParallelEnv):
                 )
 
         env_action = self._dict_to_env_action(actions)
+        self.prev_actions.update(actions)
         obs, rewards, terminated, truncated, info = self._env.step(env_action)
 
         obs_dict = self._obs_to_dict(obs)
@@ -182,15 +201,38 @@ class MultiCarRacingParallelEnv(ParallelEnv):
         return np.asarray(ordered, dtype=np.int64)
 
     def _obs_to_dict(self, obs: np.ndarray) -> dict[str, np.ndarray]:
-        if self._env.num_agents == 1:
-            return {self.possible_agents[0]: obs}
-
-        # Only return observations for alive agents
-        return {
-            agent: obs[idx]
-            for idx, agent in enumerate(self.possible_agents)
-            if not self._env.agent_terminated[idx]
-        }
+        if self.ctde:
+            obs_dict = {}
+            for agent in self.possible_agents:
+                idx = self._agent_name_to_idx[agent]
+                team_id = self._env.team_ids[idx]
+                teammates = [i for i in range(self._env.num_agents) if self._env.team_ids[i] == team_id and i != idx]
+                opponents = [i for i in range(self._env.num_agents) if self._env.team_ids[i] != team_id]
+                ordered_indices = [idx] + sorted(teammates) + sorted(opponents)
+                # Stack obs along new axis
+                agent_obs_list = []
+                for i in ordered_indices:
+                    obs_i = obs[i].astype(np.float32)  # (96, 96, 3)
+                    if self.include_actions:
+                        action_i = self.prev_actions[self.possible_agents[i]]
+                        if not self._env.continuous:
+                            action_i = np.array([action_i], dtype=np.float32)  # (1,)
+                        # Tile action to (96, 96, action_dim)
+                        action_tiled = np.tile(action_i, (96, 96, 1))
+                        obs_i = np.concatenate([obs_i, action_tiled], axis=2)  # (96, 96, 3 + action_dim)
+                    agent_obs_list.append(obs_i)
+                concat_obs = np.stack(agent_obs_list, axis=0)  # (num_agents, 96, 96, channels)
+                obs_dict[agent] = concat_obs
+            return obs_dict
+        else:
+            if self._env.num_agents == 1:
+                return {self.possible_agents[0]: obs}
+            # Only return observations for alive agents
+            return {
+                agent: obs[idx]
+                for idx, agent in enumerate(self.possible_agents)
+                if not self._env.agent_terminated[idx]
+            }
 
     def _reward_to_dict(
         self, rewards: float | np.ndarray, agents: list[str] | None = None
@@ -224,6 +266,9 @@ if __name__ == "__main__":
         num_agents=2,
         render_mode="human",
         verbose=False,
+        continuous=False,
+        ctde=True,
+        include_actions=True,
     )
     print(f"Agents: {test_env.possible_agents}")
     print(f"Action space: {test_env.action_space('agent_0')}")
