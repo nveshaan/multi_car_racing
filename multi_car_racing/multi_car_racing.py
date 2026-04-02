@@ -185,6 +185,7 @@ class MultiCarRacing(gym.Env, EzPickle):
         domain_randomize: bool = False,
         team_ids: list[int] | None = None,
         teammate_reward_scale: float = 0.0,
+        max_episode_steps: int | None = 1000,
     ):
         if team_ids is None:
             team_ids = list(range(num_agents))
@@ -210,6 +211,7 @@ class MultiCarRacing(gym.Env, EzPickle):
             domain_randomize,
             team_ids,
             teammate_reward_scale,
+            max_episode_steps,
         )
 
         self.num_agents = num_agents
@@ -226,6 +228,7 @@ class MultiCarRacing(gym.Env, EzPickle):
         self.human_show_team_colors = human_show_team_colors
         self.team_ids = np.array(team_ids, dtype=np.int32)
         self.teammate_reward_scale = float(teammate_reward_scale)
+        self.max_steps = max_episode_steps
         self.team_color_map = self._build_team_color_map()
 
         self._seed = seed
@@ -263,6 +266,7 @@ class MultiCarRacing(gym.Env, EzPickle):
         self.agent_terminated = np.zeros(num_agents, dtype=bool)
         self.agent_finish_position = np.full(num_agents, -1, dtype=np.int32)
         self.finish_counter = 0
+        self.step_count = 0
 
         self.fd_tile = fixtureDef(
             shape=polygonShape(vertices=[(0, 0), (1, 0), (1, -1), (0, -1)])
@@ -624,6 +628,7 @@ class MultiCarRacing(gym.Env, EzPickle):
         self.agent_terminated = np.zeros(self.num_agents, dtype=bool)
         self.agent_finish_position = np.full(self.num_agents, -1, dtype=np.int32)
         self.finish_counter = 0
+        self.step_count = 0
         self.t = 0.0
         self.isopen = True
         self.road_poly = []
@@ -749,6 +754,13 @@ class MultiCarRacing(gym.Env, EzPickle):
         terminated = False
         truncated = False
         info = {}
+        
+        # Increment step counter
+        self.step_count += 1
+        
+        # Check for max_steps truncation
+        if self.max_steps is not None and self.step_count >= self.max_steps:
+            truncated = True
 
         if action is not None:
             self.reward -= 0.1
@@ -797,10 +809,15 @@ class MultiCarRacing(gym.Env, EzPickle):
             # Store per-agent termination info for this step
             agent_terminated_this_step = newly_finished | out_of_bounds_agents
             
-            # Reset grid layout if agents terminated (for display recalculation)
-            if np.any(agent_terminated_this_step):
-                self._grid_cols = None
-                self._grid_rows = None
+            # Recalculate grid layout for remaining agents (compact layout, same viewport size)
+            if np.any(agent_terminated_this_step) and self._grid_cols is not None:
+                num_alive = int(np.sum(~self.agent_terminated))
+                if num_alive > 0:
+                    self._grid_cols = min(num_alive, self._grid_cols)
+                    self._grid_rows = math.ceil(num_alive / self._grid_cols)
+                    total_w = self._grid_viewport_w * self._grid_cols
+                    total_h = self._grid_viewport_h * self._grid_rows
+                    self.display_screen = pygame.display.set_mode((total_w, total_h))
             
             if np.any(newly_finished):
                 info["lap_finished"] = True
