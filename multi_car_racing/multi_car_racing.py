@@ -186,6 +186,7 @@ class MultiCarRacing(gym.Env, EzPickle):
         team_ids: list[int] | None = None,
         teammate_reward_scale: float = 0.0,
         max_episode_steps: int | None = 1000,
+        reset_on_agent_death: bool = False,
     ):
         if team_ids is None:
             team_ids = list(range(num_agents))
@@ -212,6 +213,7 @@ class MultiCarRacing(gym.Env, EzPickle):
             team_ids,
             teammate_reward_scale,
             max_episode_steps,
+            reset_on_agent_death,
         )
 
         self.num_agents = num_agents
@@ -229,6 +231,7 @@ class MultiCarRacing(gym.Env, EzPickle):
         self.team_ids = np.array(team_ids, dtype=np.int32)
         self.teammate_reward_scale = float(teammate_reward_scale)
         self.max_steps = max_episode_steps
+        self.reset_on_agent_death = reset_on_agent_death
         self.team_color_map = self._build_team_color_map()
 
         self._seed = seed
@@ -808,6 +811,20 @@ class MultiCarRacing(gym.Env, EzPickle):
 
             # Store per-agent termination info for this step
             agent_terminated_this_step = newly_finished | out_of_bounds_agents
+            
+            # Check if any agent died and reset_on_agent_death is enabled
+            if self.reset_on_agent_death and np.any(agent_terminated_this_step):
+                observation, reset_info = self.reset()
+                # Return reset observation with no termination
+                terminated = False
+                truncated = False
+                step_reward = np.zeros(self.num_agents, dtype=np.float32)
+                info = reset_info
+                if self.num_agents == 1:
+                    reward = float(step_reward[0])
+                else:
+                    reward = step_reward.astype(np.float32)
+                return observation, reward, terminated, truncated, info
             
             # Recalculate grid layout for remaining agents (compact layout, same viewport size)
             if np.any(agent_terminated_this_step) and self._grid_cols is not None:
