@@ -7,21 +7,6 @@
 
 This repository contains `MultiCarRacing-v2`, a multiplayer variant of Gym’s original `CarRacing-v3` environment.
 
-## Quick Start
-
-See [docs/USAGE.md](docs/USAGE.md) for basic examples with single and multi-agent modes.
-
-**Quick example:**
-
-```python
-import gymnasium as gym
-import multi_car_racing
-
-env = gym.make("MultiCarRacing-v2", num_agents=2)
-obs, info = env.reset()
-obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
-```
-
 ## Installation
 
 ```bash
