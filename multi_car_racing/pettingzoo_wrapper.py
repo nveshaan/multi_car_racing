@@ -53,7 +53,7 @@ class MultiCarRacingParallelEnv(ParallelEnv):
     def __init__(self, **env_kwargs: Any) -> None:
         self.ctde = env_kwargs.pop("ctde", False)
         self.include_actions = env_kwargs.pop("include_actions", False)
-        self.reset_on_agent_death = env_kwargs.pop("reset_on_agent_death", False)
+        self.reset_on_agent_death = env_kwargs["reset_on_agent_death"]
         self._env = MultiCarRacing(**env_kwargs)
         self.possible_agents = [f"agent_{i}" for i in range(self._env.num_agents)]
         self.agents = self.possible_agents[:]
@@ -193,16 +193,17 @@ class MultiCarRacingParallelEnv(ParallelEnv):
 
             infos[agent] = agent_info
 
-        # Remove agents that just terminated from the agents list
-        self.agents = [
-            agent
-            for agent in live_agents
-            if not agent_terminated_this_step[self._agent_name_to_idx[agent]]
-        ]
+        # Remove agents that just terminated from the agents list (only if not resetting on death)
+        if not self.reset_on_agent_death:
+            self.agents = [
+                agent
+                for agent in live_agents
+                if not agent_terminated_this_step[self._agent_name_to_idx[agent]]
+            ]
 
-        # Global termination only when all agents are done
-        if terminated or truncated or not self.agents:
-            self.agents = []
+            # Global termination only when all agents are done
+            if terminated or truncated or not self.agents:
+                self.agents = []
 
         return obs_dict, rewards_dict, terminations, truncations, infos
 

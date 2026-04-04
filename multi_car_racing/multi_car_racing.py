@@ -37,7 +37,7 @@ WINDOW_W = 1000
 WINDOW_H = 800
 
 SCALE = 6.0
-TRACK_RAD = 900 / SCALE
+TRACK_RAD = 90 / SCALE
 PLAYFIELD = 2000 / SCALE
 FPS = 50
 ZOOM = 2.7
@@ -186,7 +186,7 @@ class MultiCarRacing(gym.Env, EzPickle):
         team_ids: list[int] | None = None,
         teammate_reward_scale: float = 0.0,
         max_episode_steps: int | None = 1000,
-        reset_on_agent_death: bool = False,
+        reset_on_agent_death: bool = True,
     ):
         if team_ids is None:
             team_ids = list(range(num_agents))
