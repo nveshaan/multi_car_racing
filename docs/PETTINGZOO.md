@@ -164,7 +164,7 @@ Since dead agents are removed from `env.agents`, the wrapper does NOT work with 
 
 **For direct training**:
 
-Set `reset_on_agent_death = True` for consistent `self.agents`.
+Set `auto_reset = True` for consistent `self.agents` (agents stay alive and respawn).
 
 **Example loop**:
 
@@ -181,15 +181,15 @@ while True:
 
 Episodes can end in three ways:
 
-1. **All agents terminate** (`all(terminations.values()) == True`): All agents naturally finished or went OOB
-   - Only possible when `reset_on_agent_death=False`
+5. **All agents terminate** (`all(terminations.values()) == True`): All agents naturally finished or went OOB
+   - Only possible when `auto_reset=False`
    - Typical in races: episode ends when all competitors finish
 
-2. **Max steps reached** (`any(truncations.values()) == True`): Episode truncated by time limit
+6. **Max steps reached** (`any(truncations.values()) == True`): Episode truncated by time limit
    - Applies to all agents uniformly
    - Training framework signal to end episode and start fresh
 
-3. **Manual close** (`env.close()`): Environment explicitly closed
+7. **Manual close** (`env.close()`): Environment explicitly closed
 
 ```python
 if all(terminations.values()) or any(truncations.values()):
@@ -203,4 +203,4 @@ See [AGENT_TERMINATION.md](AGENT_TERMINATION.md) for comprehensive documentation
 - **When agents terminate**: lap completion or out of bounds
 - **Termination vs Truncation**: per-agent state changes vs episode time limits
 - **Info dict structure**: accessing termination reason and ordering information
-- **Auto-reset behavior**: `reset_on_agent_death` parameter
+- **Auto-reset behavior**: `auto_reset` parameter

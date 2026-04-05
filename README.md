@@ -50,7 +50,7 @@ All original authors retain their respective copyrights.
 
 ## Version History
 
-- `v2`: adds PettingZoo `ParallelEnv` wrapper, per-agent termination semantics, dead-agent removal from physics/observations, CTDE with dict-based global observations, `reset_on_agent_death` for training stability, and rendering/cleanup improvements
+- `v2`: adds PettingZoo `ParallelEnv` wrapper, per-agent termination semantics, dead-agent removal from physics/observations, CTDE with dict-based global observations, `auto_reset` for continuous lap racing, and rendering/cleanup improvements
 - `v1`: introduced team support via `team_ids`, opponent-aware tile rewards, and `info["team_rewards"]`
 - `v0`: original multi-car release
 

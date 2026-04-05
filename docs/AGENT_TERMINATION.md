@@ -145,27 +145,28 @@ obs, rewards, terminations, truncations, infos = env.step(actions)
 # truncations = {"agent_0": True, "agent_1": True}    # both truncated by max_steps
 ```
 
-## Auto-Reset on Agent Death
+## Auto-Reset on Agent Termination
 
-The `reset_on_agent_death` parameter enables automatic environment reset whenever any agent terminates. This is useful for ensuring all agents remain active throughout training episodes, which can improve stability in multi-agent learning scenarios.
+The `auto_reset` parameter enables automatic respawning of agents whenever they terminate (finish lap or go out of bounds). When enabled, agents are repositioned at the track start with zero velocity instead of being destroyed, allowing continuous racing until max_steps is reached.
 
-### When Enabled (`reset_on_agent_death=True`)
+### When Enabled (`auto_reset=True`)
 
-- **PettingZoo wrapper**: Any agent termination (lap finish or out of bounds) triggers immediate auto-reset
-  - Episode continues with fresh starting positions for all agents
-  - Client code never sees `terminations=True` for agent deaths (auto-reset intercepts them)
-  - Still sees `truncations=True` when max_steps is reached
-  - Training loop never pauses (seamless training experience)
+- **Agent behavior**: When an agent finishes a lap or goes out of bounds, it respawns at track start
+  - Tile visit count is reset to 0 for the respawned agent
+  - Rewards continue to accumulate
+  - Episode continues seamlessly without environment reset
+  - All agents remain racing on the same track
 
-- **Gymnasium API**: Core environment handles auto-reset internally
-  - Returns `terminated=False` even when agents die (episode continues)
-  - You never see dead agents unless you manually check `info["agent_terminated_this_step"]`
+- **Termination semantics**: Agents are never marked as terminated due to lap/OOB
+  - `agent_terminated_this_step` tracking available in info
+  - Only `truncations=True` when max_steps is reached
+  - Seamless training experience with fewer episode resets
 
-### When Disabled (`reset_on_agent_death=False`, default)
+### When Disabled (`auto_reset=False`, default)
 
 - Agents terminate naturally when they finish the lap or go out of bounds
-- `terminations[agent]` becomes `True` when agent finishes/OOB
-- Episode continues with remaining agents until all are done or max_steps reached
+- Terminated agents are removed from physics/observations
+- Episode continues with remaining agents until all terminate or max_steps reached
 - Enables natural multi-agent races where winners exit early
 
 ### Example: PettingZoo with Auto-Reset
@@ -173,14 +174,14 @@ The `reset_on_agent_death` parameter enables automatic environment reset wheneve
 ```python
 from multi_car_racing import parallel_env
 
-env = parallel_env(num_agents=2, reset_on_agent_death=True)
+env = parallel_env(num_agents=2, auto_reset=True)
 obs, infos = env.reset()
 
 for step in range(10000):
     actions = {agent: env.action_space(agent).sample() for agent in env.agents}
     obs, rewards, terminations, truncations, infos = env.step(actions)
 
-    # terminations[agent] is ALWAYS False (auto-reset prevents it)
+    # terminations[agent] is ALWAYS False (agents respawn instead)
     # truncations[agent] is True ONLY when max_steps is reached
 
     if any(truncations.values()):  # max_steps truncation
@@ -196,14 +197,14 @@ import multi_car_racing
 env = gym.make(
     "MultiCarRacing-v2",
     num_agents=2,
-    reset_on_agent_death=True,
+    auto_reset=True,
 )
 
 obs, info = env.reset()
 for step in range(1000):
     action = env.action_space.sample()
     obs, reward, terminated, truncated, info = env.step(action)
-    # terminated stays False (auto-reset happens internally)
+    # terminated stays False (agents respawn internally)
     if truncated:
         break
 ```

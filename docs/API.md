@@ -20,7 +20,7 @@
 | `domain_randomize`           | bool  | `False` | Randomize road and grass colors on reset                                                                                                         |
 | `team_ids`                   | list  | `None`  | Integer team label per car (length must equal `num_agents`). Cars sharing a team ID are teammates. Defaults to each car being its own team.      |
 | `teammate_reward_scale`      | float |  `0.0`  | Multiplier for teammate prior coverage in tile reward. `0.0` means neutral teammate effect.                                                      |
-| `reset_on_agent_death`       | bool  | `True` | Automatically reset the environment when any agent terminates (completes lap or goes out of bounds). When enabled, all agents remain active.     |
+| `auto_reset`                 | bool  | `True`  | When enabled, agents that finish a lap or go out-of-bounds are respawned at the track start. Episode continues until max_steps is reached.       |
 | **PettingZoo wrapper only:** |       |         |                                                                                                                                                  |
 | `ctde`                       | bool  | `False` | Enable Centralized Training Decentralized Execution with global observations as nested dicts (PettingZoo wrapper only)                           |
 | `include_actions`            | bool  | `False` | Include previous actions of all agents in global observation dict (requires `ctde=True`, PettingZoo wrapper only)                                |

@@ -186,7 +186,7 @@ class MultiCarRacing(gym.Env, EzPickle):
         team_ids: list[int] | None = None,
         teammate_reward_scale: float = 0.0,
         max_episode_steps: int | None = 1000,
-        reset_on_agent_death: bool = True,
+        auto_reset: bool = True,
     ):
         if team_ids is None:
             team_ids = list(range(num_agents))
@@ -213,7 +213,7 @@ class MultiCarRacing(gym.Env, EzPickle):
             team_ids,
             teammate_reward_scale,
             max_episode_steps,
-            reset_on_agent_death,
+            auto_reset,
         )
 
         self.num_agents = num_agents
@@ -231,7 +231,7 @@ class MultiCarRacing(gym.Env, EzPickle):
         self.team_ids = np.array(team_ids, dtype=np.int32)
         self.teammate_reward_scale = float(teammate_reward_scale)
         self.max_steps = max_episode_steps
-        self.reset_on_agent_death = reset_on_agent_death
+        self.auto_reset = auto_reset
         self.team_color_map = self._build_team_color_map()
 
         self._seed = seed
@@ -612,6 +612,44 @@ class MultiCarRacing(gym.Env, EzPickle):
             for wheel in car.wheels:
                 wheel.car_id = car_id
 
+    def _respawn_car(self, car_id: int):
+        """Respawn a car at the track start with zero velocity."""
+        if self.cars[car_id] is None:
+            return
+        
+        # Get start position from track
+        _, pos_x, pos_y = self.track[0][1:4]
+        line_number = math.floor(self.car_order[car_id] / 2)
+        side = (2 * (self.car_order[car_id] % 2)) - 1
+
+        dx = self.track[-line_number * LINE_SPACING][2] - pos_x
+        dy = self.track[-line_number * LINE_SPACING][3] - pos_y
+
+        angle = self.track[-line_number * LINE_SPACING][1]
+        if self.episode_direction == "CW":
+            angle -= np.pi
+
+        norm_theta = angle - np.pi / 2
+        new_x = pos_x + dx + (LATERAL_SPACING * np.sin(norm_theta) * side)
+        new_y = pos_y + dy + (LATERAL_SPACING * np.cos(norm_theta) * side)
+
+        # Reset car position and velocity
+        car = self.cars[car_id]
+        car.hull.position = (new_x, new_y)
+        car.hull.angle = angle
+        car.hull.linearVelocity = (0, 0)
+        car.hull.angularVelocity = 0
+        
+        # Reset driving flags and tile count
+        self.tile_visited_count[car_id] = 0
+        self.new_lap[car_id] = False
+        self.driving_backward[car_id] = False
+        self.driving_on_grass[car_id] = False
+        
+        # Reset tile visited flags for this agent
+        for tile in self.road:
+            tile.road_visited[car_id] = False
+
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         # Determine which seed to use: explicit reset seed overrides constructor seed
         effective_seed = seed if seed is not None else self._seed
@@ -738,12 +776,13 @@ class MultiCarRacing(gym.Env, EzPickle):
     def step(self, action):
         if action is not None:
             decoded_action = self._decode_action(action)
-            # Only apply actions to agents that haven't terminated yet
+            # Apply actions to agents: all agents when auto_reset, only alive when not auto_reset
             for car_id, car in enumerate(self.cars):
-                if not self.agent_terminated[car_id] and car is not None:
-                    car.steer(-float(decoded_action[car_id][0]))
-                    car.gas(float(decoded_action[car_id][1]))
-                    car.brake(float(decoded_action[car_id][2]))
+                if car is not None:
+                    if self.auto_reset or not self.agent_terminated[car_id]:
+                        car.steer(-float(decoded_action[car_id][0]))
+                        car.gas(float(decoded_action[car_id][1]))
+                        car.brake(float(decoded_action[car_id][2]))
 
         for idx, car in enumerate(self.cars):
             if car is not None:
@@ -780,68 +819,57 @@ class MultiCarRacing(gym.Env, EzPickle):
                 self.new_lap,
                 np.equal(self.tile_visited_count, len(self.track)),
             )
-            # Mark newly-finished agents as terminated and assign finish position
             newly_finished = lap_finished_agents & ~self.agent_terminated
-            for idx in np.where(newly_finished)[0]:
-                self.finish_counter += 1
-                self.agent_finish_position[idx] = self.finish_counter
-                place_str = f"{self.finish_counter}{['st', 'nd', 'rd', 'th'][(min(self.finish_counter, 4) - 1)]}"
-                print(f"Agent {idx} finished! Position: {place_str} Place")
-                # Remove terminated car from physics world to prevent collisions
-                if self.cars[idx] is not None:
-                    self.cars[idx].destroy()
-                    self.cars[idx] = None
-            self.agent_terminated |= newly_finished
 
             # Check for out-of-bounds agents
             out_of_bounds_agents = np.zeros(self.num_agents, dtype=bool)
             for car_id, car in enumerate(self.cars):
-                if not self.agent_terminated[car_id]:
+                if car is not None and not self.agent_terminated[car_id]:
                     x, y = car.hull.position
                     if abs(x) > PLAYFIELD or abs(y) > PLAYFIELD:
                         step_reward[car_id] = -100.0
                         out_of_bounds_agents[car_id] = True
-                        self.agent_terminated[car_id] = True
-                        # Print out-of-bounds status
-                        print(f"Agent {car_id} went out of bounds!")
-                        # Remove terminated car from physics world to prevent collisions
-                        if self.cars[car_id] is not None:
-                            self.cars[car_id].destroy()
-                            self.cars[car_id] = None
 
-            # Store per-agent termination info for this step
-            agent_terminated_this_step = newly_finished | out_of_bounds_agents
+            # Handle lap-finished and out-of-bounds agents
+            if self.auto_reset:
+                # Respawn agents at track start instead of terminating
+                for idx in np.where(newly_finished)[0]:
+                    print(f"Agent {idx} finished lap! Respawning at track start...")
+                    self._respawn_car(idx)
+                
+                for idx in np.where(out_of_bounds_agents)[0]:
+                    print(f"Agent {idx} went out of bounds! Respawning at track start...")
+                    self._respawn_car(idx)
+                
+                # Keep all agents racing - don't mark as terminated
+                agent_terminated_this_step = np.zeros(self.num_agents, dtype=bool)
+            else:
+                # Old behavior: terminate agents
+                for idx in np.where(newly_finished)[0]:
+                    self.finish_counter += 1
+                    self.agent_finish_position[idx] = self.finish_counter
+                    place_str = f"{self.finish_counter}{['st', 'nd', 'rd', 'th'][(min(self.finish_counter, 4) - 1)]}"
+                    print(f"Agent {idx} finished! Position: {place_str} Place")
+                    if self.cars[idx] is not None:
+                        self.cars[idx].destroy()
+                        self.cars[idx] = None
+                self.agent_terminated |= newly_finished
+
+                for idx in np.where(out_of_bounds_agents)[0]:
+                    print(f"Agent {idx} went out of bounds!")
+                    self.agent_terminated[idx] = True
+                    if self.cars[idx] is not None:
+                        self.cars[idx].destroy()
+                        self.cars[idx] = None
+
+                agent_terminated_this_step = newly_finished | out_of_bounds_agents
             
-            # Check if any agent died and reset_on_agent_death is enabled
-            if self.reset_on_agent_death and np.any(agent_terminated_this_step):
-                observation, reset_info = self.reset()
-                # Return reset observation with no termination
-                terminated = False
-                truncated = False
-                step_reward = np.zeros(self.num_agents, dtype=np.float32)
-                info = reset_info
-                if self.num_agents == 1:
-                    reward = float(step_reward[0])
-                else:
-                    reward = step_reward.astype(np.float32)
-                return observation, reward, terminated, truncated, info
-            
-            # Recalculate grid layout for remaining agents (compact layout, same viewport size)
-            if np.any(agent_terminated_this_step) and self._grid_cols is not None:
-                num_alive = int(np.sum(~self.agent_terminated))
-                if num_alive > 0:
-                    self._grid_cols = min(num_alive, self._grid_cols)
-                    self._grid_rows = math.ceil(num_alive / self._grid_cols)
-                    total_w = self._grid_viewport_w * self._grid_cols
-                    total_h = self._grid_viewport_h * self._grid_rows
-                    self.display_screen = pygame.display.set_mode((total_w, total_h))
-            
-            if np.any(newly_finished):
+            if np.any(newly_finished) and not self.auto_reset:
                 info["lap_finished"] = True
                 info["lap_finished_agents"] = newly_finished.copy()
                 info["winner"] = int(np.flatnonzero(newly_finished)[0])
 
-            if np.any(out_of_bounds_agents):
+            if np.any(out_of_bounds_agents) and not self.auto_reset:
                 info["out_of_bounds_agents"] = out_of_bounds_agents.copy()
 
             unique_teams = np.unique(self.team_ids)
@@ -855,8 +883,8 @@ class MultiCarRacing(gym.Env, EzPickle):
             info["agent_alive"] = ~self.agent_terminated.copy()
             info["agent_finish_position"] = self.agent_finish_position.copy()
             
-            # Global termination only when all agents are terminated
-            if np.all(self.agent_terminated):
+            # Global termination only when all agents are terminated (only relevant when auto_reset=False)
+            if not self.auto_reset and np.all(self.agent_terminated):
                 terminated = True
 
         if not self.isopen:

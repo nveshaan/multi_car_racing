@@ -25,7 +25,7 @@ class MultiCarRacingParallelEnv(ParallelEnv):
     - Dead agents remain in observations/rewards/terminations with blank/zero values  
     - CTDE support: centralized training with global observations (ctde=True)
     - Action history: optionally include previous actions in observations (include_actions=True)
-    - Auto-reset: automatically reset when any agent terminates (reset_on_agent_death=True)
+    - Auto-reset: automatically respawn agents when they finish/go OOB (auto_reset=True)
 
     This design maintains Supersuit vectorizer compatibility by keeping agent list stable.
     See PETTINGZOO.md and AGENT_TERMINATION.md for detailed behavior documentation.
@@ -322,7 +322,7 @@ if __name__ == "__main__":
         render_mode="human",
         verbose=False,
         continuous=True,  # Use continuous control for smoother gameplay
-        reset_on_agent_death=False,  # Let race finish naturally
+        auto_reset=False,  # Let race finish naturally
     )
     
     pygame.init()
