@@ -1,8 +1,61 @@
 # Agent Termination
 
-## Per-Agent Termination Semantics
+## Overview
 
-Both the core `MultiCarRacing` environment and PettingZoo wrapper support **per-agent termination**:
+The environment supports two modes for handling agent termination:
+
+- **`auto_reset=True` (default)**: When any agent finishes a lap or goes out-of-bounds, **all agents are respawned** at the track start and cumulative rewards are reset to zero
+- **`auto_reset=False`**: Individual agents terminate when they complete a lap or go out-of-bounds; the episode continues until all agents have terminated
+
+## Auto-Reset Mode (`auto_reset=True`)
+
+When `auto_reset=True`:
+
+1. If **any agent** completes the lap or goes out of bounds, **all agents** are immediately respawned at the track start
+2. All cumulative rewards (`self.reward`) are reset to zero
+3. All agents' tile visit counts, lap counters, and driving flags are reset
+4. The episode continues until `max_steps` is reached or the environment is manually closed
+5. Agents always stay "alive" in the observation and action arrays
+
+This mode is useful for:
+- Continuous training scenarios where you want synchronized resets
+- Ensuring all agents face equivalent conditions after each checkpoint
+- Simplified training logic with consistent episode structure
+
+### Example with `auto_reset=True`
+
+```python
+env = MultiCarRacing(num_agents=3, auto_reset=True, max_episode_steps=5000)
+obs, info = env.reset()
+
+done = False
+total_reward = np.zeros(3, dtype=np.float32)
+reset_count = 0
+
+while not done:
+    actions = np.random.randn(3, 3)
+    obs, reward, terminated, truncated, info = env.step(actions)
+    done = terminated or truncated
+    
+    # Rewards reset when any agent dies
+    if "lap_finished" in info or "out_of_bounds_agents" in info:
+        print(f"Reset #{reset_count}: Rewards reset to zero")
+        reset_count += 1
+    
+    total_reward += reward
+
+print(f"Final episode reward: {total_reward}")
+print(f"Number of mid-episode resets: {reset_count}")
+env.close()
+```
+
+## Per-Agent Termination Mode (`auto_reset=False`)
+
+When `auto_reset=False`, individual agents terminate when they complete a lap or go out-of-bounds. The episode continues until all agents have terminated or `max_steps` is reached.
+
+### Per-Agent Termination Semantics
+
+Both the core `MultiCarRacing` environment and PettingZoo wrapper support **per-agent termination** when `auto_reset=False`:
 
 ### When Do Agents Terminate?
 
@@ -26,11 +79,11 @@ The `info` dict includes per-agent termination information:
 - `out_of_bounds`: whether this agent went out of bounds (if terminated this step)
 - `is_winner`: whether this agent was first to finish the lap
 
-## Dead Agent Behavior
+## Dead Agent Behavior (`auto_reset=False`)
 
 Once an agent terminates, its observations and actions are handled specially. **The behavior differs between the core Gymnasium API and the PettingZoo wrapper.**
 
-### Gymnasium API (without PettingZoo)
+### Gymnasium API (without PettingZoo, `auto_reset=False`)
 
 #### Observations
 
@@ -53,7 +106,7 @@ Once an agent terminates, its observations and actions are handled specially. **
 
 **Benefit**: This approach maintains consistent array shapes throughout the episode, which is useful for training with fixed-size tensors.
 
-### PettingZoo API
+### PettingZoo API (`auto_reset=False`)
 
 The PettingZoo wrapper **removes dead agents** from the `env.agents` list:
 

@@ -37,7 +37,7 @@ WINDOW_W = 1000
 WINDOW_H = 800
 
 SCALE = 6.0
-TRACK_RAD = 90 / SCALE
+TRACK_RAD = 900 / SCALE
 PLAYFIELD = 2000 / SCALE
 FPS = 50
 ZOOM = 2.7
@@ -838,14 +838,23 @@ class MultiCarRacing(gym.Env, EzPickle):
 
             # Handle lap-finished and out-of-bounds agents
             if self.auto_reset:
-                # Respawn agents at track start instead of terminating
-                for idx in np.where(newly_finished)[0]:
-                    print(f"Agent {idx} finished lap! Respawning at track start...")
-                    self._respawn_car(idx)
+                # Check if any agent has died
+                any_agent_died = np.any(newly_finished) or np.any(out_of_bounds_agents)
                 
-                for idx in np.where(out_of_bounds_agents)[0]:
-                    print(f"Agent {idx} went out of bounds! Respawning at track start...")
-                    self._respawn_car(idx)
+                if any_agent_died:
+                    # Respawn ALL agents and reset rewards
+                    for idx in range(self.num_agents):
+                        self._respawn_car(idx)
+                    
+                    # Reset cumulative reward to zero
+                    self.reward = np.zeros(self.num_agents, dtype=np.float32)
+                    self.prev_reward = np.zeros(self.num_agents, dtype=np.float32)
+                    
+                    # Print which agents triggered the respawn
+                    for idx in np.where(newly_finished)[0]:
+                        print(f"Agent {idx} finished lap! Respawning all agents...")
+                    for idx in np.where(out_of_bounds_agents)[0]:
+                        print(f"Agent {idx} went out of bounds! Respawning all agents...")
                 
                 # Keep all agents racing - don't mark as terminated
                 agent_terminated_this_step = np.zeros(self.num_agents, dtype=bool)
