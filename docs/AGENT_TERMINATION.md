@@ -4,23 +4,25 @@
 
 The environment supports two modes for handling agent termination:
 
-- **`auto_reset=True` (default)**: When any agent finishes a lap or goes out-of-bounds, **all agents are respawned** at the track start and cumulative rewards are reset to zero
+- **`auto_reset=True` (default)**: When any agent finishes a lap or goes out-of-bounds, **all agents are respawned** at a random track position and cumulative rewards are reset to zero
 - **`auto_reset=False`**: Individual agents terminate when they complete a lap or go out-of-bounds; the episode continues until all agents have terminated
 
 ## Auto-Reset Mode (`auto_reset=True`)
 
 When `auto_reset=True`:
 
-1. If **any agent** completes the lap or goes out of bounds, **all agents** are immediately respawned at the track start
-2. All cumulative rewards (`self.reward`) are reset to zero
-3. All agents' tile visit counts, lap counters, and driving flags are reset
-4. The episode continues until `max_steps` is reached or the environment is manually closed
-5. Agents always stay "alive" in the observation and action arrays
+1. If **any agent** completes the lap or goes out of bounds, **all agents** are immediately respawned at a **random position on the track**
+2. All agents are aligned to the track's orientation at their spawn position
+3. All cumulative rewards (`self.reward`) are reset to zero
+4. All agents' tile visit counts, lap counters, and driving flags are reset
+5. The episode continues until `max_steps` is reached or the environment is manually closed
+6. Agents always stay "alive" in the observation and action arrays
 
 This mode is useful for:
 - Continuous training scenarios where you want synchronized resets
 - Ensuring all agents face equivalent conditions after each checkpoint
 - Simplified training logic with consistent episode structure
+- Creating diverse training scenarios with random respawn positions
 
 ### Example with `auto_reset=True`
 
@@ -37,9 +39,9 @@ while not done:
     obs, reward, terminated, truncated, info = env.step(actions)
     done = terminated or truncated
     
-    # Rewards reset when any agent dies
+    # Rewards reset when any agent dies (agents respawn at random track position)
     if "lap_finished" in info or "out_of_bounds_agents" in info:
-        print(f"Reset #{reset_count}: Rewards reset to zero")
+        print(f"Reset #{reset_count}: Agents respawned at random track position, rewards reset to zero")
         reset_count += 1
     
     total_reward += reward

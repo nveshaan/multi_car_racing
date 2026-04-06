@@ -612,32 +612,40 @@ class MultiCarRacing(gym.Env, EzPickle):
             for wheel in car.wheels:
                 wheel.car_id = car_id
 
-    def _respawn_car(self, car_id: int):
-        """Respawn a car at the track start with zero velocity."""
+    def _respawn_car(self, car_id: int, track_index: int | None = None):
+        """Respawn a car at a track section, aligned to track orientation.
+        
+        Args:
+            car_id: Index of the car to respawn
+            track_index: Track index to respawn at. If None, use current track start (index 0).
+        """
         if self.cars[car_id] is None:
             return
         
-        # Get start position from track
-        _, pos_x, pos_y = self.track[0][1:4]
-        line_number = math.floor(self.car_order[car_id] / 2)
-        side = (2 * (self.car_order[car_id] % 2)) - 1
-
-        dx = self.track[-line_number * LINE_SPACING][2] - pos_x
-        dy = self.track[-line_number * LINE_SPACING][3] - pos_y
-
-        angle = self.track[-line_number * LINE_SPACING][1]
+        # Use track start position if no index specified
+        if track_index is None:
+            track_index = 0
+        
+        # Ensure track_index is within valid range
+        track_index = int(track_index) % len(self.track)
+        
+        # Get track position and orientation at the specified track index
+        _, angle, spawn_x, spawn_y = self.track[track_index]
+        
         if self.episode_direction == "CW":
             angle -= np.pi
-
+        
+        # Calculate lateral offset based on car order (for formation)
+        side = (2 * (self.car_order[car_id] % 2)) - 1
         norm_theta = angle - np.pi / 2
-        new_x = pos_x + dx + (LATERAL_SPACING * np.sin(norm_theta) * side)
-        new_y = pos_y + dy + (LATERAL_SPACING * np.cos(norm_theta) * side)
-
-        # Destroy the old car and create a new one at the starting position
+        new_x = spawn_x + (LATERAL_SPACING * np.sin(norm_theta) * side)
+        new_y = spawn_y + (LATERAL_SPACING * np.cos(norm_theta) * side)
+        
+        # Destroy the old car and create a new one
         old_car = self.cars[car_id]
         old_car.destroy()
         
-        # Create a new car at the starting position
+        # Create a new car at the calculated position
         car = car_dynamics.Car(self.world, angle, new_x, new_y)
         car_team = int(self.team_ids[car_id])
         car.hull.color = self.team_color_map[car_team]
@@ -842,9 +850,12 @@ class MultiCarRacing(gym.Env, EzPickle):
                 any_agent_died = np.any(newly_finished) or np.any(out_of_bounds_agents)
                 
                 if any_agent_died:
-                    # Respawn ALL agents and reset rewards
+                    # Choose a random track section for respawning
+                    random_track_index = self.np_random.integers(0, len(self.track))
+                    
+                    # Respawn ALL agents at the random track section
                     for idx in range(self.num_agents):
-                        self._respawn_car(idx)
+                        self._respawn_car(idx, random_track_index)
                     
                     # Reset cumulative reward to zero
                     self.reward = np.zeros(self.num_agents, dtype=np.float32)
@@ -852,9 +863,9 @@ class MultiCarRacing(gym.Env, EzPickle):
                     
                     # Print which agents triggered the respawn
                     for idx in np.where(newly_finished)[0]:
-                        print(f"Agent {idx} finished lap! Respawning all agents...")
+                        print(f"Agent {idx} finished lap! Respawning all agents at random track position {random_track_index}...")
                     for idx in np.where(out_of_bounds_agents)[0]:
-                        print(f"Agent {idx} went out of bounds! Respawning all agents...")
+                        print(f"Agent {idx} went out of bounds! Respawning all agents at random track position {random_track_index}...")
                 
                 # Keep all agents racing - don't mark as terminated
                 agent_terminated_this_step = np.zeros(self.num_agents, dtype=bool)
