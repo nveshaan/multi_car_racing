@@ -37,7 +37,7 @@ WINDOW_W = 1000
 WINDOW_H = 800
 
 SCALE = 6.0
-TRACK_RAD = 900 / SCALE
+TRACK_RAD = 90 / SCALE
 PLAYFIELD = 2000 / SCALE
 FPS = 50
 ZOOM = 2.7
@@ -633,12 +633,18 @@ class MultiCarRacing(gym.Env, EzPickle):
         new_x = pos_x + dx + (LATERAL_SPACING * np.sin(norm_theta) * side)
         new_y = pos_y + dy + (LATERAL_SPACING * np.cos(norm_theta) * side)
 
-        # Reset car position and velocity
-        car = self.cars[car_id]
-        car.hull.position = (new_x, new_y)
-        car.hull.angle = angle
-        car.hull.linearVelocity = (0, 0)
-        car.hull.angularVelocity = 0
+        # Destroy the old car and create a new one at the starting position
+        old_car = self.cars[car_id]
+        old_car.destroy()
+        
+        # Create a new car at the starting position
+        car = car_dynamics.Car(self.world, angle, new_x, new_y)
+        car_team = int(self.team_ids[car_id])
+        car.hull.color = self.team_color_map[car_team]
+        self.cars[car_id] = car
+        
+        for wheel in car.wheels:
+            wheel.car_id = car_id
         
         # Reset driving flags and tile count
         self.tile_visited_count[car_id] = 0
