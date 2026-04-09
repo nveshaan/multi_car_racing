@@ -187,6 +187,7 @@ class MultiCarRacing(gym.Env, EzPickle):
         teammate_reward_scale: float = 0.0,
         max_episode_steps: int | None = 1000,
         auto_reset: bool = True,
+        ctde: bool = False,
     ):
         if team_ids is None:
             team_ids = list(range(num_agents))
@@ -214,6 +215,7 @@ class MultiCarRacing(gym.Env, EzPickle):
             teammate_reward_scale,
             max_episode_steps,
             auto_reset,
+            ctde,
         )
 
         self.num_agents = num_agents
@@ -232,6 +234,7 @@ class MultiCarRacing(gym.Env, EzPickle):
         self.teammate_reward_scale = float(teammate_reward_scale)
         self.max_steps = max_episode_steps
         self.auto_reset = auto_reset
+        self.ctde = ctde
         self.team_color_map = self._build_team_color_map()
 
         self._seed = seed
@@ -303,15 +306,49 @@ class MultiCarRacing(gym.Env, EzPickle):
                     np.full(self.num_agents, n_actions)
                 )
 
-        obs_shape = (STATE_H, STATE_W, 3)
-        if self.num_agents > 1:
-            obs_shape = (self.num_agents, STATE_H, STATE_W, 3)
+        if self.ctde and self.num_agents > 1:
+            obs_shape = (self.num_agents, STATE_H, STATE_W, 3 * self.num_agents)
+        else:
+            obs_shape = (STATE_H, STATE_W, 3)
+            if self.num_agents > 1:
+                obs_shape = (self.num_agents, STATE_H, STATE_W, 3)
         self.observation_space = spaces.Box(
             low=0,
             high=255,
             shape=obs_shape,
             dtype=np.uint8,
         )
+
+    def _build_ctde_observation(self, frames: np.ndarray) -> np.ndarray:
+        """Build CTDE observations with channel concat in self-teammate-opponent order.
+
+        Args:
+            frames: Per-agent rendered frames with shape (N, H, W, 3)
+
+        Returns:
+            CTDE observation with shape (N, H, W, 3N)
+        """
+        if self.num_agents <= 1:
+            return frames
+
+        ctde_obs = []
+        for agent_idx in range(self.num_agents):
+            agent_team = self.team_ids[agent_idx]
+
+            teammate_indices = [
+                idx
+                for idx in range(self.num_agents)
+                if idx != agent_idx and self.team_ids[idx] == agent_team
+            ]
+            opponent_indices = [
+                idx for idx in range(self.num_agents) if self.team_ids[idx] != agent_team
+            ]
+            ordered_indices = [agent_idx] + sorted(teammate_indices) + sorted(opponent_indices)
+
+            stacked = [frames[idx] for idx in ordered_indices]
+            ctde_obs.append(np.concatenate(stacked, axis=-1))
+
+        return np.stack(ctde_obs, axis=0)
 
     def _build_team_color_map(self):
         unique_teams = np.unique(self.team_ids)
@@ -948,6 +985,10 @@ class MultiCarRacing(gym.Env, EzPickle):
                 frame = self._render_car_view(car_id, mode)
             frames.append(frame)
         frames = np.stack(frames, axis=0)
+
+        if self.ctde and self.num_agents > 1:
+            frames = self._build_ctde_observation(frames)
+
         if self.num_agents == 1:
             return frames[0]
         return frames

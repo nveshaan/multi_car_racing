@@ -23,8 +23,7 @@ class MultiCarRacingParallelEnv(ParallelEnv):
     Key behavior:
     - self.agents always equals self.possible_agents (never modified)
     - Dead agents remain in observations/rewards/terminations with blank/zero values  
-    - CTDE support: centralized training with global observations (ctde=True)
-    - Action history: optionally include previous actions in observations (include_actions=True)
+    - Per-agent frame observations (or CTDE channel-concatenated frames)
     - Auto-reset: automatically respawn agents when they finish/go OOB (auto_reset=True)
 
     This design maintains Supersuit vectorizer compatibility by keeping agent list stable.
@@ -37,8 +36,6 @@ class MultiCarRacingParallelEnv(ParallelEnv):
     }
 
     def __init__(self, **env_kwargs: Any) -> None:
-        self.ctde = env_kwargs.pop("ctde", False)
-        self.include_actions = env_kwargs.pop("include_actions", False)
         self._env = MultiCarRacing(**env_kwargs)
         self.possible_agents = [f"agent_{i}" for i in range(self._env.num_agents)]
         self.agents = self.possible_agents[:]
@@ -51,30 +48,13 @@ class MultiCarRacingParallelEnv(ParallelEnv):
     def observation_space(self, agent: str) -> spaces.Space:
         """Get observation space for an agent.
 
-        In CTDE mode, returns Dict space with global observations and optionally actions.
-        In standard mode, returns individual agent frame space.
+        Returns per-agent frame observation space.
+        If core env ctde=True and num_agents>1, channels are concatenated to 3N.
         """
-        if self.ctde:
-            space_dict = {
-                "global_obs": spaces.Dict({
-                    agent_name: spaces.Box(low=0, high=255, shape=(96, 96, 3), dtype=np.float32)
-                    for agent_name in self.possible_agents
-                }),
-            }
-            
-            if self.include_actions:
-                if self._env.continuous:
-                    action_box = spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=np.float32)
-                else:
-                    action_box = spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32)
-                
-                space_dict["global_actions"] = spaces.Dict({
-                    agent_name: action_box for agent_name in self.possible_agents
-                })
-            
-            return spaces.Dict(space_dict)
-        else:
-            return spaces.Box(low=0, high=255, shape=(96, 96, 3), dtype=np.uint8)
+        channels = 3
+        if self._env.ctde and self._env.num_agents > 1:
+            channels = 3 * self._env.num_agents
+        return spaces.Box(low=0, high=255, shape=(96, 96, channels), dtype=np.uint8)
 
     @lru_cache(maxsize=None)
     def action_space(self, agent: str) -> spaces.Space:
@@ -89,17 +69,9 @@ class MultiCarRacingParallelEnv(ParallelEnv):
         return spaces.Discrete(n_actions)
 
     def reset(self, seed: int | None = None, options: dict | None = None):
-        """Reset environment. Initialize all agents as active and reset action history."""
+        """Reset environment and initialize all agents as active."""
         obs, _ = self._env.reset(seed=seed, options=options)
         self.agents = self.possible_agents[:]
-        
-        # Initialize action history for each agent (used in include_actions mode)
-        self.prev_actions = {}
-        for agent in self.possible_agents:
-            if self._env.continuous:
-                self.prev_actions[agent] = np.zeros(3, dtype=np.float32)
-            else:
-                self.prev_actions[agent] = 0
 
         obs_dict = self._obs_to_dict(obs)
         infos = {agent: {} for agent in self.agents}
@@ -117,7 +89,6 @@ class MultiCarRacingParallelEnv(ParallelEnv):
                 actions[agent] = self._get_noop_action()
 
         env_action = self._dict_to_env_action(actions)
-        self.prev_actions.update(actions)
         obs, rewards, terminated, truncated, info = self._env.step(env_action)
 
         # Get per-agent termination info from the core environment
@@ -219,57 +190,17 @@ class MultiCarRacingParallelEnv(ParallelEnv):
         Only return observations for alive agents (not in self.agents).
         Dead agents are completely removed from the observation dict.
         """
-        if self.ctde:
-            obs_dict = {}
-            
-            for agent in self.agents:
-                idx = self._agent_name_to_idx[agent]
-                team_id = self._env.team_ids[idx]
-                
-                # Organize observations: self, teammates, opponents (only alive agents)
-                teammates = [i for i in range(self._env.num_agents) 
-                            if self._env.team_ids[i] == team_id and i != idx 
-                            and self.possible_agents[i] in self.agents]
-                opponents = [i for i in range(self._env.num_agents) 
-                            if self._env.team_ids[i] != team_id 
-                            and self.possible_agents[i] in self.agents]
-                ordered_indices = [idx] + sorted(teammates) + sorted(opponents)
-                
-                # Build global observation dict with only alive agents
-                global_obs = {}
-                for i in ordered_indices:
-                    agent_name = self.possible_agents[i]
-                    global_obs[agent_name] = obs[i].astype(np.float32)
-                
-                agent_obs_dict = {"global_obs": global_obs}
-                
-                # Optionally include global actions for alive agents only
-                if self.include_actions:
-                    global_actions = {}
-                    for i in ordered_indices:
-                        agent_name = self.possible_agents[i]
-                        action_i = self.prev_actions.get(agent_name, self._get_noop_action())
-                        if not self._env.continuous:
-                            action_i = np.array([action_i], dtype=np.float32)
-                        global_actions[agent_name] = action_i
-                    agent_obs_dict["global_actions"] = global_actions
-                
-                obs_dict[agent] = agent_obs_dict
-            return obs_dict
-        else:
-            # Standard mode: return observations ONLY for alive agents in self.agents
-            if self._env.num_agents == 1:
-                agent = self.possible_agents[0]
-                if agent in self.agents:
-                    return {agent: obs}
-                else:
-                    return {}
-            
-            obs_dict = {}
-            for agent in self.agents:
-                idx = self._agent_name_to_idx[agent]
-                obs_dict[agent] = obs[idx]
-            return obs_dict
+        if self._env.num_agents == 1:
+            agent = self.possible_agents[0]
+            if agent in self.agents:
+                return {agent: obs}
+            return {}
+
+        obs_dict = {}
+        for agent in self.agents:
+            idx = self._agent_name_to_idx[agent]
+            obs_dict[agent] = obs[idx]
+        return obs_dict
 
     def _reward_to_dict(
         self, rewards: float | np.ndarray

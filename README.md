@@ -36,8 +36,9 @@ This launches a two-player variant (each player in its own window) that can be c
 - **[docs/API.md](docs/API.md)** — Constructor arguments, observation/action spaces, shapes reference
 - **[docs/USAGE.md](docs/USAGE.md)** — Single-agent and multi-agent usage examples
 - **[docs/TEAMS.md](docs/TEAMS.md)** — Team configuration and reward structure
-- **[docs/PETTINGZOO.md](docs/PETTINGZOO.md)** — PettingZoo wrapper and CTDE mode
+- **[docs/PETTINGZOO.md](docs/PETTINGZOO.md)** — PettingZoo wrapper semantics, dynamic/alive agent dicts, and CTDE channel-concatenated observations
 - **[docs/AGENT_TERMINATION.md](docs/AGENT_TERMINATION.md)** — Per-agent termination, dead agent behavior, auto-reset
+- **[docs/FUTURE.md](docs/FUTURE.md)** — Planned improvements and upcoming behavior changes
 
 ## Acknowledgment
 
@@ -50,7 +51,7 @@ All original authors retain their respective copyrights.
 
 ## Version History
 
-- `v2`: adds PettingZoo `ParallelEnv` wrapper, per-agent termination semantics, dead-agent removal from physics/observations, CTDE with dict-based global observations, `auto_reset` for continuous lap racing, and rendering/cleanup improvements
+- `v2`: adds PettingZoo `ParallelEnv` wrapper, per-agent termination semantics, dead-agent removal from physics/observations, CTDE channel-concatenated observations, `auto_reset` for continuous lap racing, and rendering/cleanup improvements
 - `v1`: introduced team support via `team_ids`, opponent-aware tile rewards, and `info["team_rewards"]`
 - `v0`: original multi-car release
 
