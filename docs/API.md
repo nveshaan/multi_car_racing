@@ -2,27 +2,27 @@
 
 ## Constructor Arguments
 
-| Parameter | Type | Default | Description |
-| --- | :---: | :---: | --- |
-| `num_agents` | int | `2` | Number of cars/agents. |
-| `verbose` | bool | `False` | Prints track-generation diagnostics. |
-| `seed` | int \| None | `None` | RNG seed used by reset logic. |
-| `direction` | str | `'CCW'` | Track winding direction (`'CW'` or `'CCW'`). |
-| `use_random_direction` | bool | `True` | Randomize winding direction each reset (overrides `direction`). |
-| `backwards_flag` | bool | `True` | Shows backward-driving indicator in rendered views. |
-| `h_ratio` | float | `0.75` | Vertical camera anchor in render. |
-| `use_ego_color` | bool | `False` | Per-viewport role coloring (`ego`, `teammate`, `opponent`). |
-| `human_show_team_colors` | bool | `False` | If `True`, human window uses team colors even with `use_ego_color=True`. |
-| `continuous` | bool | `True` | Continuous controls (`Box`) vs discrete controls. |
-| `discrete_actions` | np.ndarray \| None | `None` | Optional discrete action table with shape `(n_actions, 3)`. |
-| `render_mode` | str \| None | `None` | `human`, `rgb_array`, or `state_pixels`. |
-| `lap_complete_percent` | float | `0.95` | Fraction of lap required before crossing tile 0 counts as lap completion. |
-| `domain_randomize` | bool | `False` | Randomize road/grass colors on reset. |
-| `team_ids` | list[int] \| None | `None` | Team id per agent. Defaults to each agent being its own team. |
-| `teammate_reward_scale` | float | `0.0` | Teammate prior-coverage term in tile reward shaping. |
-| `max_episode_steps` | int \| None | `1000` | Truncates episode when reached. |
-| `auto_reset` | bool | `True` | If any agent finishes or goes OOB, respawn all agents at a random track section and keep the episode running. |
-| `ctde` | bool | `False` | If `True` and `num_agents > 1`, observations are channel-concatenated to `3 * num_agents` channels in self-teammate-opponent order. |
+| Parameter                |        Type        | Default | Description                                                                                                                         |
+| ------------------------ | :----------------: | :-----: | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `num_agents`             |        int         |   `2`   | Number of cars/agents.                                                                                                              |
+| `verbose`                |        bool        | `False` | Prints track-generation diagnostics.                                                                                                |
+| `seed`                   |    int \| None     | `None`  | RNG seed used by reset logic.                                                                                                       |
+| `direction`              |        str         | `'CCW'` | Track winding direction (`'CW'` or `'CCW'`).                                                                                        |
+| `use_random_direction`   |        bool        | `True`  | Randomize winding direction each reset (overrides `direction`).                                                                     |
+| `backwards_flag`         |        bool        | `True`  | Shows backward-driving indicator in rendered views.                                                                                 |
+| `h_ratio`                |       float        | `0.75`  | Vertical camera anchor in render.                                                                                                   |
+| `use_ego_color`          |        bool        | `False` | Per-viewport role coloring (`ego`, `teammate`, `opponent`).                                                                         |
+| `human_show_team_colors` |        bool        | `False` | If `True`, human window uses team colors even with `use_ego_color=True`.                                                            |
+| `continuous`             |        bool        | `True`  | Continuous controls (`Box`) vs discrete controls.                                                                                   |
+| `discrete_actions`       | np.ndarray \| None | `None`  | Optional discrete action table with shape `(n_actions, 3)`.                                                                         |
+| `render_mode`            |    str \| None     | `None`  | `human`, `rgb_array`, or `state_pixels`.                                                                                            |
+| `lap_complete_percent`   |       float        | `0.95`  | Fraction of lap required before crossing tile 0 counts as lap completion.                                                           |
+| `domain_randomize`       |        bool        | `False` | Randomize road/grass colors on reset.                                                                                               |
+| `team_ids`               | list[int] \| None  | `None`  | Team id per agent. Defaults to each agent being its own team.                                                                       |
+| `teammate_reward_scale`  |       float        |  `0.0`  | Teammate prior-coverage term in tile reward shaping.                                                                                |
+| `max_episode_steps`      |    int \| None     | `1000`  | Truncates episode when reached.                                                                                                     |
+| `auto_reset`             |        bool        | `True`  | If any agent finishes or goes OOB, respawn all agents at a random track section and keep the episode running.                       |
+| `ctde`                   |        bool        | `False` | If `True` and `num_agents > 1`, observations are channel-concatenated to `3 * num_agents` channels in self-teammate-opponent order. |
 
 ## Action Space
 
@@ -40,13 +40,13 @@
 - Multi-agent: `MultiDiscrete([n_actions] * N)`
 - Default action table:
 
-| Action | `(steer, gas, brake)` | Meaning |
-| --- | --- | --- |
-| `0` | `(0.0, 0.0, 0.0)` | No-op |
-| `1` | `(-1.0, 0.0, 0.0)` | Steer left |
-| `2` | `(1.0, 0.0, 0.0)` | Steer right |
-| `3` | `(0.0, 1.0, 0.0)` | Gas |
-| `4` | `(0.0, 0.0, 0.8)` | Brake |
+| Action | `(steer, gas, brake)` | Meaning     |
+| ------ | --------------------- | ----------- |
+| `0`    | `(0.0, 0.0, 0.0)`     | No-op       |
+| `1`    | `(-1.0, 0.0, 0.0)`    | Steer left  |
+| `2`    | `(1.0, 0.0, 0.0)`     | Steer right |
+| `3`    | `(0.0, 1.0, 0.0)`     | Gas         |
+| `4`    | `(0.0, 0.0, 0.8)`     | Brake       |
 
 Where `N = num_agents`.
 
