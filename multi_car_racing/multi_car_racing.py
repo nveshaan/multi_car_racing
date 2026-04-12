@@ -323,7 +323,9 @@ class MultiCarRacing(gym.Env, EzPickle):
         """Build CTDE observations with channel concat in self-teammate-opponent order.
 
         Args:
-            frames: Per-agent rendered frames with shape (N, H, W, 3)
+            frames: Per-agent rendered frames matrix with shape (N, N, H, W, 3).
+                    frames[i, j] represents agent j's camera from agent i's color perspective.
+                    This relies on N×N rendering for color consistency across stacked channels.
 
         Returns:
             CTDE observation with shape (N, H, W, 3N)
@@ -345,7 +347,7 @@ class MultiCarRacing(gym.Env, EzPickle):
             ]
             ordered_indices = [agent_idx] + sorted(teammate_indices) + sorted(opponent_indices)
 
-            stacked = [frames[idx] for idx in ordered_indices]
+            stacked = [frames[agent_idx, idx] for idx in ordered_indices]
             ctde_obs.append(np.concatenate(stacked, axis=-1))
 
         return np.stack(ctde_obs, axis=0)
@@ -975,25 +977,42 @@ class MultiCarRacing(gym.Env, EzPickle):
         return self._render_frames(mode)
 
     def _render_frames(self, mode: str):
+        """Render frames for all agents. 
+        If CTDE is enabled, performs N×N renders for color consistency.
+        """
         assert mode in ["state_pixels", "rgb_array"]
-        frames = []
-        for car_id in range(self.num_agents):
-            # Skip rendering terminated agents (return blank frame)
-            if self.agent_terminated[car_id]:
-                frame = np.zeros((STATE_H, STATE_W, 3), dtype=np.uint8)
-            else:
-                frame = self._render_car_view(car_id, mode)
-            frames.append(frame)
-        frames = np.stack(frames, axis=0)
-
         if self.ctde and self.num_agents > 1:
-            frames = self._build_ctde_observation(frames)
+            frames_matrix = []
+            for viewer_id in range(self.num_agents):
+                viewer_frames = []
+                for camera_id in range(self.num_agents):
+                    if self.agent_terminated[camera_id]:
+                        frame = np.zeros((STATE_H, STATE_W, 3), dtype=np.uint8)
+                    else:
+                        frame = self._render_car_view(camera_id, mode, viewer_id=viewer_id)
+                    viewer_frames.append(frame)
+                frames_matrix.append(viewer_frames)
+            
+            # Shape (N, N, H, W, 3) matrix
+            frames = np.stack(frames_matrix, axis=0)
+            return self._build_ctde_observation(frames)
+        else:
+            frames = []
+            for car_id in range(self.num_agents):
+                # Skip rendering terminated agents (return blank frame)
+                if self.agent_terminated[car_id]:
+                    frame = np.zeros((STATE_H, STATE_W, 3), dtype=np.uint8)
+                else:
+                    frame = self._render_car_view(car_id, mode)
+                frames.append(frame)
+            frames = np.stack(frames, axis=0)
 
-        if self.num_agents == 1:
-            return frames[0]
-        return frames
+            if self.num_agents == 1:
+                return frames[0]
+            return frames
 
-    def _render_car_view(self, car_id: int, mode: str):
+    def _render_car_view(self, car_id: int, mode: str, viewer_id: int = None):
+        """Render a single car's view. If viewer_id is provided, colors are set from viewer_id's team perspective."""
         assert mode in self.metadata["render_modes"]
 
         if not pygame.get_init():
@@ -1031,7 +1050,10 @@ class MultiCarRacing(gym.Env, EzPickle):
             WINDOW_H * (1.0 - self.h_ratio) + translation[1],
         )
 
-        self._render_road(surf, zoom, translation, angle, car_id)
+        # For rendering the road with correct agent colors, we pass the agent color perspective `viewer_id` 
+        # (or `car_id` if None)
+        color_perspective_id = viewer_id if viewer_id is not None else car_id
+        self._render_road(surf, zoom, translation, angle, color_perspective_id)
 
         original_colors = None
         apply_role_colors = self.use_ego_color and not (
@@ -1042,12 +1064,12 @@ class MultiCarRacing(gym.Env, EzPickle):
                 tuple(car.hull.color) if car is not None else None
                 for car in self.cars
             ]
-            ego_team = int(self.team_ids[car_id])
+            ego_team = int(self.team_ids[color_perspective_id])
             for idx, car in enumerate(self.cars):
                 if self.agent_terminated[idx] or car is None:
                     # Skip terminated agents
                     continue
-                if idx == car_id:
+                if idx == color_perspective_id:
                     car.hull.color = EGO_COLOR
                 elif int(self.team_ids[idx]) == ego_team:
                     car.hull.color = TEAMMATE_COLOR
